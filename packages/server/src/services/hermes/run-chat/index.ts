@@ -26,6 +26,7 @@ import { contentBlocksToString } from './content-blocks'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
 import { userCanAccessProfile } from '../../../db/hermes/users-store'
+import { getUserCreditAccount, userHasPositiveCredits } from '../../../db/hermes/billing-store'
 
 export type { ContentBlock } from './types'
 
@@ -176,6 +177,19 @@ export class ChatRunSocket {
           event: 'run.failed',
           session_id: data.session_id,
           error: err instanceof Error ? err.message : String(err),
+        })
+        return
+      }
+      if (socketUser && socketUser.role !== 'super_admin' && !userHasPositiveCredits(socketUser.id)) {
+        const account = getUserCreditAccount(socketUser.id)
+        socket.emit('run.failed', {
+          event: 'run.failed',
+          session_id: data.session_id,
+          error: '积分不足，请联系管理员充值后继续使用。',
+          billing: {
+            credits_balance: account.balance,
+            insufficient: true,
+          },
         })
         return
       }

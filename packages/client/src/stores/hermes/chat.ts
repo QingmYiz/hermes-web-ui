@@ -1238,6 +1238,25 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
+  function addBillingNotice(sessionId: string, billing: any) {
+    if (!billing || !billing.charged) return
+    const spent = Number(billing.credits_spent || 0)
+    const balance = Number(billing.balance_after || 0)
+    const tokens = Number(billing.input_tokens || 0) + Number(billing.output_tokens || 0)
+    const content = billing.insufficient
+      ? `本次消耗 ${spent.toFixed(4)} 积分（${tokens} token），当前余额 ${balance.toFixed(2)}。积分已不足，后续提问会被拒绝，请联系管理员充值。`
+      : `本次消耗 ${spent.toFixed(4)} 积分（${tokens} token），当前余额 ${balance.toFixed(2)}。`
+    const msgs = getSessionMsgs(sessionId)
+    const last = msgs[msgs.length - 1]
+    if (last?.role === 'system' && last.content === content) return
+    addMessage(sessionId, {
+      id: uid(),
+      role: 'system',
+      content,
+      timestamp: Date.now(),
+    })
+  }
+
   function handleSessionCommandEvent(evt: RunEvent) {
     if (seenSessionCommandEvents.has(evt)) return
     seenSessionCommandEvents.add(evt)
@@ -2402,6 +2421,7 @@ export const useChatStore = defineStore('chat', () => {
                 }
               }
 
+              addBillingNotice(sid, (evt as any).billing)
               if ((evt as any).queue_remaining > 0) {
                 queueLengths.value.set(sid, (evt as any).queue_remaining)
               } else {
@@ -2425,6 +2445,7 @@ export const useChatStore = defineStore('chat', () => {
                 }
               }
               addAgentErrorMessage(sid, evt.error)
+              addBillingNotice(sid, (evt as any).billing)
               settleRunningTools(sid, 'error')
               if ((evt as any).queue_remaining > 0) {
                 queueLengths.value.set(sid, (evt as any).queue_remaining)
@@ -2842,6 +2863,7 @@ export const useChatStore = defineStore('chat', () => {
         case 'run.completed': {
           clearAgentEventMessages(sid)
           const hasQueue = (evt as any).queue_remaining > 0
+          addBillingNotice(sid, (evt as any).billing)
           if (hasQueue) {
             queueLengths.value.set(sid, (evt as any).queue_remaining)
           } else {
@@ -2984,6 +3006,7 @@ export const useChatStore = defineStore('chat', () => {
             queueLengths.value.delete(sid)
           }
           addAgentErrorMessage(sid, evt.error)
+          addBillingNotice(sid, (evt as any).billing)
           settleRunningTools(sid, 'error')
           if (!hasQueue) {
             cleanup()

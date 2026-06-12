@@ -50,6 +50,13 @@ export interface BillingSummary {
   }
 }
 
+export interface MyBillingResponse {
+  period_days: number
+  account: { user_id: number; balance: number; updated_at: number }
+  user: BillingUserSummary | null
+  transactions: CreditTransaction[]
+}
+
 export interface CreditTransaction {
   id: number
   user_id: number
@@ -64,6 +71,12 @@ export async function fetchBillingSummary(days = 30): Promise<BillingSummary> {
   const params = new URLSearchParams()
   params.set('days', String(Math.max(1, Math.floor(days))))
   return request<BillingSummary>(`/api/hermes/billing/summary?${params}`)
+}
+
+export async function fetchMyBilling(days = 30): Promise<MyBillingResponse> {
+  const params = new URLSearchParams()
+  params.set('days', String(Math.max(1, Math.floor(days))))
+  return request<MyBillingResponse>(`/api/hermes/billing/me?${params}`)
 }
 
 export async function saveModelPrice(input: Pick<ModelPrice,

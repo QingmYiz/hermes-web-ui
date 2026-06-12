@@ -73,6 +73,19 @@ export interface BillingSummary {
   }
 }
 
+export interface UsageChargeResult {
+  charged: boolean
+  user_id: number | null
+  amount: number
+  balance_after: number | null
+  credits_spent: number
+  real_rmb: number
+  input_tokens: number
+  output_tokens: number
+  model: string
+  insufficient: boolean
+}
+
 const DEFAULT_PRICE: Omit<ModelPrice, 'model' | 'created_at' | 'updated_at' | 'explicit'> = {
   input_credit_per_1k: 0.01,
   output_credit_per_1k: 0.03,
@@ -98,7 +111,7 @@ function normalizePrice(input: Partial<ModelPrice> & { model: string }): ModelPr
   }
 }
 
-function defaultPriceForModel(model: string): ModelPrice {
+export function defaultPriceForModel(model: string): ModelPrice {
   return {
     model: model.trim() || 'unknown',
     ...DEFAULT_PRICE,
@@ -224,13 +237,117 @@ function priceMapFromRows(rows: ModelPrice[]): Map<string, ModelPrice> {
   return new Map(rows.map(row => [row.model, normalizePrice(row)]))
 }
 
-function costForUsage(row: BillingUserModelUsage, price: ModelPrice): Pick<BillingUserModelUsage, 'credits_spent' | 'real_rmb'> {
+export function costForUsage(row: Pick<BillingUserModelUsage, 'input_tokens' | 'output_tokens'>, price: ModelPrice): Pick<BillingUserModelUsage, 'credits_spent' | 'real_rmb'> {
   const inputUnits = row.input_tokens / 1000
   const outputUnits = row.output_tokens / 1000
   return {
     credits_spent: inputUnits * price.input_credit_per_1k + outputUnits * price.output_credit_per_1k,
     real_rmb: inputUnits * price.input_rmb_per_1k + outputUnits * price.output_rmb_per_1k,
   }
+}
+
+export function priceForModel(model: string): ModelPrice {
+  const normalizedModel = model?.trim() || 'unknown'
+  return listModelPrices().find(row => row.model === normalizedModel) || defaultPriceForModel(normalizedModel)
+}
+
+export function userIdForProfile(profile: string): number | null {
+  const db = getDb()
+  if (!db) return null
+  const profileName = profile?.trim() || 'default'
+  const row = db.prepare(`
+    SELECT user_id FROM ${USER_PROFILES_TABLE}
+    WHERE profile_name = ?
+    ORDER BY is_default DESC, user_id ASC
+    LIMIT 1
+  `).get(profileName) as { user_id?: number } | undefined
+  return Number.isInteger(row?.user_id) ? Number(row!.user_id) : null
+}
+
+export function chargeProfileUsage(input: {
+  profile: string
+  model?: string
+  inputTokens: number
+  outputTokens: number
+  previousInputTokens?: number
+  previousOutputTokens?: number
+  sessionId?: string
+}): UsageChargeResult {
+  const db = getDb()
+  const model = input.model?.trim() || 'unknown'
+  const inputDelta = Math.max(0, Math.floor(input.inputTokens || 0) - Math.floor(input.previousInputTokens || 0))
+  const outputDelta = Math.max(0, Math.floor(input.outputTokens || 0) - Math.floor(input.previousOutputTokens || 0))
+  const emptyResult: UsageChargeResult = {
+    charged: false,
+    user_id: null,
+    amount: 0,
+    balance_after: null,
+    credits_spent: 0,
+    real_rmb: 0,
+    input_tokens: inputDelta,
+    output_tokens: outputDelta,
+    model,
+    insufficient: false,
+  }
+  if (!db || (inputDelta <= 0 && outputDelta <= 0)) return emptyResult
+
+  const userId = userIdForProfile(input.profile)
+  if (!userId) return emptyResult
+
+  const price = priceForModel(model)
+  const costs = costForUsage({
+    input_tokens: inputDelta,
+    output_tokens: outputDelta,
+  }, price)
+  const credits = Math.max(0, costs.credits_spent)
+  if (credits <= 0) {
+    return {
+      ...emptyResult,
+      user_id: userId,
+      credits_spent: 0,
+      real_rmb: costs.real_rmb,
+    }
+  }
+
+  const now = Date.now()
+  db.exec('BEGIN')
+  try {
+    const current = getUserCreditAccount(userId)
+    const nextBalance = current.balance - credits
+    db.prepare(`UPDATE ${USER_CREDITS_TABLE} SET balance = ?, updated_at = ? WHERE user_id = ?`)
+      .run(nextBalance, now, userId)
+    db.prepare(`
+      INSERT INTO ${CREDIT_TRANSACTIONS_TABLE} (user_id, amount, balance_after, reason, actor_user_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      userId,
+      -credits,
+      nextBalance,
+      `模型用量扣费${input.sessionId ? ` (${input.sessionId})` : ''}`,
+      null,
+      now,
+    )
+    db.exec('COMMIT')
+    return {
+      charged: true,
+      user_id: userId,
+      amount: -credits,
+      balance_after: nextBalance,
+      credits_spent: credits,
+      real_rmb: costs.real_rmb,
+      input_tokens: inputDelta,
+      output_tokens: outputDelta,
+      model,
+      insufficient: nextBalance < 0,
+    }
+  } catch (err) {
+    db.exec('ROLLBACK')
+    throw err
+  }
+}
+
+export function userHasPositiveCredits(userId: number): boolean {
+  return getUserCreditAccount(userId).balance > 0
 }
 
 export function getBillingSummary(days = 30): BillingSummary {
@@ -270,16 +387,21 @@ export function getBillingSummary(days = 30): BillingSummary {
   const cutoffMs = Date.now() - safeDays * 24 * 60 * 60 * 1000
   const rows = db.prepare(`
     SELECT up.user_id as user_id,
-      COALESCE(NULLIF(TRIM(su.model), ''), 'unknown') as model,
-      COALESCE(SUM(su.input_tokens), 0) as input_tokens,
-      COALESCE(SUM(su.output_tokens), 0) as output_tokens,
-      COALESCE(SUM(su.cache_read_tokens), 0) as cache_read_tokens,
-      COALESCE(SUM(su.cache_write_tokens), 0) as cache_write_tokens,
-      COALESCE(SUM(su.reasoning_tokens), 0) as reasoning_tokens,
-      COUNT(DISTINCT su.session_id) as sessions
-    FROM ${USAGE_TABLE} su
-    INNER JOIN ${USER_PROFILES_TABLE} up ON up.profile_name = su.profile
-    WHERE su.created_at > ?
+      COALESCE(NULLIF(TRIM(latest.model), ''), 'unknown') as model,
+      COALESCE(SUM(latest.input_tokens), 0) as input_tokens,
+      COALESCE(SUM(latest.output_tokens), 0) as output_tokens,
+      COALESCE(SUM(latest.cache_read_tokens), 0) as cache_read_tokens,
+      COALESCE(SUM(latest.cache_write_tokens), 0) as cache_write_tokens,
+      COALESCE(SUM(latest.reasoning_tokens), 0) as reasoning_tokens,
+      COUNT(DISTINCT latest.session_id) as sessions
+    FROM ${USAGE_TABLE} latest
+    INNER JOIN (
+      SELECT session_id, MAX(id) as max_id
+      FROM ${USAGE_TABLE}
+      WHERE created_at > ?
+      GROUP BY session_id
+    ) newest ON newest.max_id = latest.id
+    INNER JOIN ${USER_PROFILES_TABLE} up ON up.profile_name = latest.profile
     GROUP BY up.user_id, model
     ORDER BY input_tokens + output_tokens DESC
   `).all(cutoffMs) as Array<{

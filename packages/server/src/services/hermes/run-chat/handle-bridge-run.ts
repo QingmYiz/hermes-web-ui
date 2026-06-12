@@ -553,9 +553,10 @@ export async function handleBridgeRun(
       emit,
       bridge,
     })
-    updateUsage(session_id, {
+    const billing = updateUsage(session_id, {
       inputTokens: errUsage.inputTokens,
       outputTokens: errUsage.outputTokens,
+      model: resolvedModel || '',
       profile,
     })
     emit('run.failed', {
@@ -564,6 +565,7 @@ export async function handleBridgeRun(
       inputTokens: errUsage.inputTokens,
       outputTokens: errUsage.outputTokens,
       contextTokens: errContextTokens,
+      billing,
       queue_remaining: queueLen,
     })
     if (queueLen > 0) dequeueNextQueuedRun(socket, session_id)
@@ -1180,9 +1182,10 @@ async function applyBridgeChunkAsync(
     emit,
     bridge,
   })
-  updateUsage(sessionId, {
+  const billing = updateUsage(sessionId, {
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
+    model: modelContext.model || '',
     profile: state.profile,
   })
   const terminalError = bridgeTerminalError(chunk)
@@ -1194,6 +1197,9 @@ async function applyBridgeChunkAsync(
   state.runId = undefined
   state.activeRunMarker = undefined
   state.events = []
+  if (billing?.insufficient) {
+    state.queue = []
+  }
   const eventName = terminalError ? 'run.failed' : 'run.completed'
   const payload = {
     event: eventName,
@@ -1204,6 +1210,7 @@ async function applyBridgeChunkAsync(
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
     contextTokens,
+    billing,
     queue_remaining: state.queue.length,
   }
   emit(eventName, payload)

@@ -109,21 +109,6 @@ const router = createRouter({
       component: () => import('@/views/hermes/TerminalView.vue'),
     },
     {
-      path: '/hermes/devices',
-      name: 'hermes.devices',
-      component: () => import('@/views/hermes/DevicesView.vue'),
-    },
-    {
-      path: '/hermes/group-chat',
-      name: 'hermes.groupChat',
-      component: () => import('@/views/hermes/GroupChatView.vue'),
-    },
-    {
-      path: '/hermes/group-chat/room/:roomId',
-      name: 'hermes.groupChatRoom',
-      component: () => import('@/views/hermes/GroupChatView.vue'),
-    },
-    {
       path: '/hermes/files',
       name: 'hermes.files',
       component: () => import('@/views/hermes/FilesView.vue'),

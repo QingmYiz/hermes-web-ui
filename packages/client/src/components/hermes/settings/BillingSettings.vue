@@ -21,8 +21,17 @@ import {
   type BillingUserSummary,
   type ModelPrice,
 } from '@/api/hermes/billing'
+import { useAppStore } from '@/stores/hermes/app'
+
+const DEFAULT_PRICE = {
+  input_credit_per_1k: 0.01,
+  output_credit_per_1k: 0.03,
+  input_rmb_per_1k: 0.002,
+  output_rmb_per_1k: 0.006,
+}
 
 const message = useMessage()
+const appStore = useAppStore()
 const loading = ref(false)
 const savingPrice = ref('')
 const adjusting = ref(false)
@@ -50,6 +59,24 @@ const totals = computed(() => summary.value?.totals || {
   sessions: 0,
 })
 
+const visiblePrices = computed(() => {
+  const map = new Map(prices.value.map(price => [price.model, { ...price }]))
+  for (const group of appStore.modelGroups) {
+    for (const model of group.models || []) {
+      if (!map.has(model)) {
+        map.set(model, {
+          model,
+          ...DEFAULT_PRICE,
+          created_at: 0,
+          updated_at: 0,
+          explicit: false,
+        })
+      }
+    }
+  }
+  return [...map.values()].sort((a, b) => a.model.localeCompare(b.model))
+})
+
 function formatNumber(value: number, digits = 2): string {
   if (!Number.isFinite(value)) return '0'
   return value.toLocaleString(undefined, {
@@ -67,6 +94,7 @@ async function loadBilling(days = selectedPeriod.value) {
   selectedPeriod.value = days
   loading.value = true
   try {
+    await appStore.loadModels()
     const res = await fetchBillingSummary(days)
     summary.value = res
     prices.value = res.prices.map(price => ({ ...price }))
@@ -132,11 +160,7 @@ const userColumns = computed<DataTableColumns<BillingUserSummary>>(() => [
       ]))
       : h('span', { class: 'muted' }, '暂无模型用量')),
   },
-  {
-    title: '用户',
-    key: 'username',
-    minWidth: 140,
-  },
+  { title: '用户', key: 'username', minWidth: 140 },
   {
     title: 'Profile',
     key: 'profiles',
@@ -149,36 +173,11 @@ const userColumns = computed<DataTableColumns<BillingUserSummary>>(() => [
           : h('span', { class: 'muted' }, '未绑定'),
       }),
   },
-  {
-    title: '余额',
-    key: 'credits_balance',
-    width: 120,
-    render: row => formatNumber(row.credits_balance, 2),
-  },
-  {
-    title: 'Token',
-    key: 'tokens',
-    width: 140,
-    render: row => formatInteger(row.input_tokens + row.output_tokens),
-  },
-  {
-    title: '消耗积分',
-    key: 'credits_spent',
-    width: 130,
-    render: row => formatNumber(row.credits_spent, 4),
-  },
-  {
-    title: '真实 RMB',
-    key: 'real_rmb',
-    width: 130,
-    render: row => formatNumber(row.real_rmb, 4),
-  },
-  {
-    title: '会话',
-    key: 'sessions',
-    width: 90,
-    render: row => formatInteger(row.sessions),
-  },
+  { title: '余额', key: 'credits_balance', width: 120, render: row => formatNumber(row.credits_balance, 2) },
+  { title: 'Token', key: 'tokens', width: 140, render: row => formatInteger(row.input_tokens + row.output_tokens) },
+  { title: '消耗积分', key: 'credits_spent', width: 130, render: row => formatNumber(row.credits_spent, 4) },
+  { title: '真实 RMB', key: 'real_rmb', width: 130, render: row => formatNumber(row.real_rmb, 4) },
+  { title: '会话', key: 'sessions', width: 90, render: row => formatInteger(row.sessions) },
   {
     title: '操作',
     key: 'actions',
@@ -322,7 +321,7 @@ onMounted(() => {
       <h4 class="sub-title">模型价格</h4>
       <NDataTable
         :columns="priceColumns"
-        :data="prices"
+        :data="visiblePrices"
         :loading="loading"
         :bordered="false"
         :single-line="false"
@@ -382,10 +381,14 @@ onMounted(() => {
   font-size: 16px;
 }
 
+.section-desc,
+.muted {
+  color: $text-muted;
+}
+
 .section-desc {
   margin: 0;
   font-size: 13px;
-  color: $text-muted;
 }
 
 .period-selector {
@@ -462,22 +465,13 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-:deep(.muted) {
-  color: $text-muted;
-}
-
-@media (max-width: $breakpoint-mobile) {
+@media (max-width: 860px) {
   .toolbar {
     flex-direction: column;
   }
 
   .summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .model-usage-row {
-    grid-template-columns: 1fr;
-    gap: 4px;
   }
 }
 </style>

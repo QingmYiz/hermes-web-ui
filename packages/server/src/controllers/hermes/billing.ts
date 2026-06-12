@@ -2,6 +2,7 @@ import type { Context } from 'koa'
 import {
   adjustUserCredits,
   getBillingSummary,
+  getUserCreditAccount,
   listCreditTransactions,
   listModelPrices,
   upsertModelPrice,
@@ -20,6 +21,24 @@ function parsePriceNumber(value: unknown): number {
 
 export async function summary(ctx: Context) {
   ctx.body = getBillingSummary(safeDays(ctx.query.days))
+}
+
+export async function me(ctx: Context) {
+  const userId = Number(ctx.state.user?.id)
+  if (!Number.isInteger(userId)) {
+    ctx.status = 401
+    ctx.body = { error: 'Unauthorized' }
+    return
+  }
+  const days = safeDays(ctx.query.days)
+  const summary = getBillingSummary(days)
+  const account = getUserCreditAccount(userId)
+  ctx.body = {
+    period_days: days,
+    account,
+    user: summary.users.find(item => item.id === userId) || null,
+    transactions: listCreditTransactions(userId, 50),
+  }
 }
 
 export async function prices(ctx: Context) {

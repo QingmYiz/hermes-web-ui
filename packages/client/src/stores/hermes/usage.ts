@@ -1,4 +1,5 @@
 import { fetchUsageStats, type UsageStatsResponse } from '@/api/hermes/sessions'
+import { fetchMyBilling, type MyBillingResponse } from '@/api/hermes/billing'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
@@ -67,6 +68,7 @@ function getModelColor(model: string): string {
 
 export const useUsageStore = defineStore('usage', () => {
   const stats = ref<UsageStatsResponse | null>(null)
+  const billing = ref<MyBillingResponse | null>(null)
   const isLoading = ref(false)
   let latestRequestId = 0
 
@@ -75,8 +77,10 @@ export const useUsageStore = defineStore('usage', () => {
     isLoading.value = true
     try {
       const response = await fetchUsageStats(days)
+      const billingResponse = await fetchMyBilling(days).catch(() => null)
       if (requestId === latestRequestId) {
         stats.value = response
+        billing.value = billingResponse
       }
     } catch (err) {
       if (requestId === latestRequestId) {
@@ -105,6 +109,9 @@ export const useUsageStore = defineStore('usage', () => {
   })
 
   const estimatedCost = computed(() => stats.value?.total_cost ?? 0)
+  const creditsBalance = computed(() => billing.value?.account.balance ?? 0)
+  const creditsSpent = computed(() => billing.value?.user?.credits_spent ?? 0)
+  const realRmb = computed(() => billing.value?.user?.real_rmb ?? 0)
 
   const modelUsage = computed<ModelUsage[]>(() => {
     if (!stats.value) return []
@@ -158,6 +165,7 @@ export const useUsageStore = defineStore('usage', () => {
 
   return {
     stats,
+    billing,
     isLoading,
     hasData,
     loadSessions,
@@ -168,6 +176,9 @@ export const useUsageStore = defineStore('usage', () => {
     totalCacheTokens,
     cacheHitRate,
     estimatedCost,
+    creditsBalance,
+    creditsSpent,
+    realRmb,
     modelUsage,
     modelLegend,
     dailyUsage,

@@ -25,7 +25,6 @@ const { openSessionSearch } = useSessionSearch();
 const selectedKey = computed(() => {
   if (route.name === "hermes.session") return "hermes.chat";
   if (route.name === "hermes.historySession") return "hermes.history";
-  if (route.name === "hermes.groupChatRoom") return "hermes.groupChat";
   return route.name as string;
 });
 const isSuperAdmin = computed(() => isStoredSuperAdmin());
@@ -142,15 +141,6 @@ function openAccountSettings() {
               <polyline points="12 6 12 12 16 14" />
             </svg>
             <span>{{ t("sidebar.history") }}</span>
-          </RouteLinkItem>
-          <RouteLinkItem class="nav-item" :to="{ name: 'hermes.groupChat' }" :active="isNavActive('hermes.groupChat', 'hermes.groupChatRoom')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-              <circle cx="9" cy="7" r="4" />
-              <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-            </svg>
-            <span>{{ t("sidebar.groupChat") }}<span class="beta-tag">(beta)</span></span>
           </RouteLinkItem>
           <button class="nav-item" @click="openSessionSearch">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -313,16 +303,6 @@ function openAccountSettings() {
               <line x1="12" y1="22.08" x2="12" y2="12" />
             </svg>
             <span>{{ t("sidebar.versionPreview") }}</span>
-          </RouteLinkItem>
-          <RouteLinkItem class="nav-item" :to="{ name: 'hermes.devices' }" :active="selectedKey === 'hermes.devices'">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="4" width="18" height="12" rx="2" />
-              <path d="M8 20h8" />
-              <path d="M12 16v4" />
-              <path d="M6 8h.01" />
-              <path d="M10 8h.01" />
-            </svg>
-            <span>{{ t("sidebar.devices") }}</span>
           </RouteLinkItem>
         </div>
       </div>

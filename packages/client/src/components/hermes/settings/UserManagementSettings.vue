@@ -11,7 +11,7 @@ import {
   type UserRole,
   type UserStatus,
 } from '@/api/auth'
-import { fetchAvailableModelsForProfile, updateDefaultModel, type AvailableModelGroup } from '@/api/hermes/system'
+import { addCustomModel, fetchAvailableModelsForProfile, updateDefaultModel, type AvailableModelGroup } from '@/api/hermes/system'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -41,6 +41,7 @@ const modelForm = reactive({
   profile: '',
   provider: '',
   model: '',
+  customModel: '',
 })
 
 const roleOptions = computed(() => [
@@ -102,7 +103,7 @@ function openEdit(user: ManagedUser) {
 }
 
 function handleProfilesUpdate(value: string[]) {
-  form.profiles = value
+  form.profiles = value.map(item => item.trim()).filter(Boolean)
   if (!form.profiles.includes(form.defaultProfile)) {
     form.defaultProfile = form.profiles[0] || ''
   }
@@ -176,6 +177,7 @@ function openModelConfig(user: ManagedUser) {
   modelForm.profile = user.default_profile || user.profiles[0] || ''
   modelForm.provider = ''
   modelForm.model = ''
+  modelForm.customModel = ''
   modelGroups.value = []
   showModelModal.value = true
   void loadProfileModels()
@@ -192,12 +194,17 @@ function handleModelProviderUpdate(provider: string) {
 }
 
 async function saveModelConfig() {
-  if (!modelForm.profile || !modelForm.provider || !modelForm.model) {
+  if (!modelForm.profile || !modelForm.provider || (!modelForm.model && !modelForm.customModel.trim())) {
     message.error('请选择 profile、模型供应商和模型')
     return
   }
   modelSaving.value = true
   try {
+    const customModel = modelForm.customModel.trim()
+    if (customModel) {
+      await addCustomModel({ provider: modelForm.provider, model: customModel })
+      modelForm.model = customModel
+    }
     await updateDefaultModel({
       default: modelForm.model,
       provider: modelForm.provider,
@@ -246,11 +253,7 @@ function formatTime(value: number | null): string {
 }
 
 const columns = computed<DataTableColumns<ManagedUser>>(() => [
-  {
-    title: t('users.username'),
-    key: 'username',
-    minWidth: 140,
-  },
+  { title: t('users.username'), key: 'username', minWidth: 140 },
   {
     title: t('users.role'),
     key: 'role',
@@ -279,12 +282,7 @@ const columns = computed<DataTableColumns<ManagedUser>>(() => [
           : h('span', { class: 'muted' }, t('users.noProfiles')),
       }),
   },
-  {
-    title: t('users.lastLogin'),
-    key: 'last_login_at',
-    minWidth: 170,
-    render: (row) => formatTime(row.last_login_at),
-  },
+  { title: t('users.lastLogin'), key: 'last_login_at', minWidth: 170, render: (row) => formatTime(row.last_login_at) },
   {
     title: t('common.edit'),
     key: 'actions',
@@ -355,6 +353,7 @@ onMounted(loadUsers)
             v-model:value="form.profiles"
             multiple
             filterable
+            tag
             :options="profileOptions"
             :placeholder="t('users.profilesPlaceholder')"
             @update:value="handleProfilesUpdate"
@@ -401,6 +400,12 @@ onMounted(loadUsers)
             filterable
             :options="modelOptions"
             :loading="modelLoading"
+          />
+        </NFormItem>
+        <NFormItem label="添加可用模型">
+          <NInput
+            v-model:value="modelForm.customModel"
+            placeholder="输入模型 ID，保存后加入可选模型并设为默认"
           />
         </NFormItem>
       </NForm>

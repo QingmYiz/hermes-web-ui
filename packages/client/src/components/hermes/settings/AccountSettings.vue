@@ -6,12 +6,14 @@ import { changePassword, changeUsername, fetchCurrentUser, fetchLockedIps, unloc
 import type { LockedIp, UserAvatar } from "@/api/auth";
 import ProfileAvatar from "@/components/hermes/profiles/ProfileAvatar.vue";
 import multiavatar from "@multiavatar/multiavatar";
+import { fetchMyBilling, type MyBillingResponse } from "@/api/hermes/billing";
 
 const { t } = useI18n();
 const message = useMessage();
 
 const username = ref<string | null>(null);
 const loading = ref(false);
+const billing = ref<MyBillingResponse | null>(null);
 
 // User avatar
 const avatar = ref<UserAvatar | null>(null);
@@ -134,7 +136,19 @@ onMounted(async () => {
     const av = await fetchMyAvatar();
     avatar.value = av || { type: 'default', seed: username.value || 'default' };
   } catch { /* ignore */ }
+  try {
+    billing.value = await fetchMyBilling(30);
+  } catch { /* ignore */ }
 });
+
+function formatNumber(value: number | undefined | null, digits = 2): string {
+  const n = Number(value || 0);
+  return n.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+function formatInteger(value: number | undefined | null): string {
+  return Math.round(Number(value || 0)).toLocaleString();
+}
 
 async function handleChangePassword() {
   if (newPasswordVal.value !== newPasswordConfirm.value) {
@@ -242,6 +256,21 @@ onMounted(() => { loadLockedIps(); });
 <template>
   <div class="account-settings">
     <p class="section-desc">{{ t("login.setupDescription") }}</p>
+
+    <div class="credit-summary">
+      <div class="credit-item">
+        <span>当前积分</span>
+        <strong>{{ formatNumber(billing?.account.balance, 2) }}</strong>
+      </div>
+      <div class="credit-item">
+        <span>近 30 天消耗</span>
+        <strong>{{ formatNumber(billing?.user?.credits_spent, 4) }}</strong>
+      </div>
+      <div class="credit-item">
+        <span>近 30 天 Token</span>
+        <strong>{{ formatInteger((billing?.user?.input_tokens || 0) + (billing?.user?.output_tokens || 0)) }}</strong>
+      </div>
+    </div>
 
     <!-- User Avatar -->
     <div class="avatar-section">
@@ -357,8 +386,34 @@ onMounted(() => { loadLockedIps(); });
 .section-desc {
   font-size: 13px;
   color: $text-muted;
-  margin: 0 0 20px;
+  margin: 0 0 12px;
   line-height: 1.6;
+}
+
+.credit-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.credit-item {
+  padding: 12px;
+  border: 1px solid $border-color;
+  border-radius: $radius-sm;
+  background: $bg-card;
+}
+
+.credit-item span {
+  display: block;
+  margin-bottom: 4px;
+  color: $text-muted;
+  font-size: 12px;
+}
+
+.credit-item strong {
+  color: $text-primary;
+  font-size: 18px;
 }
 
 .action-row {

@@ -418,6 +418,15 @@ function validateProfiles(profiles: string[]): string | null {
   return missing || null
 }
 
+async function ensureManagedProfiles(profiles: string[]): Promise<void> {
+  const available = new Set(listProfileNamesFromDisk())
+  for (const profile of profiles) {
+    if (available.has(profile)) continue
+    await ensureRegistrationProfile(profile)
+    available.add(profile)
+  }
+}
+
 /**
  * GET /api/auth/users
  * Super admin user management list.
@@ -469,6 +478,7 @@ export async function createManagedUser(ctx: Context) {
     return
   }
 
+  await ensureManagedProfiles(profiles)
   const missingProfile = validateProfiles(profiles)
   if (missingProfile) {
     ctx.status = 400
@@ -554,6 +564,7 @@ export async function updateManagedUser(ctx: Context) {
   }
 
   if (profiles !== undefined) {
+    await ensureManagedProfiles(profiles)
     const missingProfile = validateProfiles(profiles)
     if (missingProfile) {
       ctx.status = 400

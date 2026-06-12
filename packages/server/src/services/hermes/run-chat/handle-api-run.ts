@@ -323,7 +323,7 @@ export async function handleApiRun(
         const finalText = extractResponseText(finalOutput)
         if (upstreamEvent === 'response.completed' && session_id) {
           const usage = finalOutput.usage || {}
-          updateUsage(session_id, {
+          const billing = updateUsage(session_id, {
             inputTokens: usage.input_tokens ?? usage.inputTokens ?? 0,
             outputTokens: usage.output_tokens ?? usage.outputTokens ?? 0,
             cacheReadTokens: usage.cache_read_tokens ?? usage.cacheReadTokens ?? 0,
@@ -332,6 +332,11 @@ export async function handleApiRun(
             model: finalOutput.model || '',
             profile: sessionMap.get(session_id)?.profile,
           })
+          if (billing?.insufficient) {
+            const state = sessionMap.get(session_id)
+            if (state) state.queue = []
+          }
+          ;(finalOutput as any).billing = billing
         }
         const eventName = upstreamEvent === 'response.completed' ? 'run.completed' : 'run.failed'
         emit(eventName, {
@@ -340,8 +345,9 @@ export async function handleApiRun(
           response_id: responseId || finalOutput.id,
           output: finalText,
           usage: finalOutput.usage,
+          billing: finalOutput.billing,
           error: finalOutput.error || parsed.error,
-          queue_remaining: queueLen,
+          queue_remaining: session_id ? sessionMap.get(session_id)?.queue?.length ?? queueLen : queueLen,
         })
         if (session_id && queueLen > 0) dequeueNextQueuedRun(socket, session_id)
         return

@@ -4,6 +4,8 @@ import { requireSuperAdmin } from '../../middleware/user-auth'
 
 export const billingRoutes = new Router()
 
+billingRoutes.get('/api/hermes/billing/me', ctrl.me)
+
 billingRoutes.use(requireSuperAdmin)
 billingRoutes.get('/api/hermes/billing/summary', ctrl.summary)
 billingRoutes.get('/api/hermes/billing/model-prices', ctrl.prices)

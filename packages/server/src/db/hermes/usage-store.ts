@@ -1,5 +1,6 @@
 import { isSqliteAvailable, getDb, jsonSet, jsonGet, jsonGetAll, jsonDelete } from '../index'
 import { USAGE_TABLE as TABLE } from './schemas'
+import { chargeProfileUsage, type UsageChargeResult } from './billing-store'
 
 export interface UsageRecord {
   input_tokens: number
@@ -34,15 +35,22 @@ export function updateUsage(
     model?: string
     profile?: string
   },
-): void {
+): UsageChargeResult | null {
   const cacheReadTokens = data.cacheReadTokens ?? 0
   const cacheWriteTokens = data.cacheWriteTokens ?? 0
   const reasoningTokens = data.reasoningTokens ?? 0
   const now = Date.now()
   const model = data.model || ''
   const profile = data.profile || 'default'
+  let previousInputTokens = 0
+  let previousOutputTokens = 0
   if (isSqliteAvailable()) {
     const db = getDb()!
+    const previous = db.prepare(
+      `SELECT input_tokens, output_tokens FROM ${TABLE} WHERE session_id = ? ORDER BY id DESC LIMIT 1`,
+    ).get(sessionId) as { input_tokens?: number; output_tokens?: number } | undefined
+    previousInputTokens = Number(previous?.input_tokens || 0)
+    previousOutputTokens = Number(previous?.output_tokens || 0)
     const columns = [
       'session_id',
       'input_tokens',
@@ -75,6 +83,9 @@ export function updateUsage(
       `INSERT INTO ${TABLE} (${columns.join(', ')}) VALUES (${values.join(', ')})`,
     ).run(...params)
   } else {
+    const previous = jsonGet(TABLE, sessionId)
+    previousInputTokens = Number(previous?.input_tokens || 0)
+    previousOutputTokens = Number(previous?.output_tokens || 0)
     jsonSet(TABLE, sessionId, {
       input_tokens: data.inputTokens,
       output_tokens: data.outputTokens,
@@ -86,6 +97,15 @@ export function updateUsage(
       created_at: now,
     })
   }
+  return chargeProfileUsage({
+    profile,
+    model,
+    inputTokens: data.inputTokens,
+    outputTokens: data.outputTokens,
+    previousInputTokens,
+    previousOutputTokens,
+    sessionId,
+  })
 }
 
 export function getUsage(sessionId: string): UsageRecord | undefined {

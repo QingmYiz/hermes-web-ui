@@ -11,10 +11,11 @@ function formatTokens(n: number): string {
   return String(n)
 }
 
-function formatCost(n: number): string {
-  if (n === 0) return '$0.00'
-  if (n < 0.01) return '<$0.01'
-  return '$' + n.toFixed(2)
+function formatNumber(n: number, digits = 2): string {
+  return Number(n || 0).toLocaleString(undefined, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })
 }
 </script>
 
@@ -34,8 +35,9 @@ function formatCost(n: number): string {
       <div class="stat-sub">{{ t('usage.avgPerDay', { n: usageStore.avgSessionsPerDay.toFixed(1) }) }}</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">{{ t('usage.estimatedCost') }}</div>
-      <div class="stat-value">{{ formatCost(usageStore.estimatedCost) }}</div>
+      <div class="stat-label">积分余额</div>
+      <div class="stat-value">{{ formatNumber(usageStore.creditsBalance, 2) }}</div>
+      <div class="stat-sub">已消耗 {{ formatNumber(usageStore.creditsSpent, 4) }}</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">{{ t('usage.cacheHitRate') }}</div>
