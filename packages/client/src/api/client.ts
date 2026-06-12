@@ -107,6 +107,11 @@ function emitAuthNotice(kind: 'expired' | 'forbidden') {
   window.dispatchEvent(new CustomEvent('hermes-auth-notice', { detail: { kind } }))
 }
 
+function isAuthRoute(): boolean {
+  const name = router.currentRoute.value.name
+  return name === 'login' || name === 'register'
+}
+
 function messageFromErrorValue(value: unknown): string {
   if (typeof value === 'string') return value
   if (value == null) return ''
@@ -170,8 +175,8 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
 
   if (res.status === 401 && isLocalBff) {
     clearApiKey()
-    emitAuthNotice('expired')
-    if (router.currentRoute.value.name !== 'login') {
+    if (!isAuthRoute()) {
+      emitAuthNotice('expired')
       router.replace({ name: 'login' })
     }
     throw new Error('Unauthorized')
@@ -182,8 +187,8 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
     if (res.status === 403 && isLocalBff) {
       if (text.includes('User is disabled or does not exist')) {
         clearApiKey()
-        emitAuthNotice('expired')
-        if (router.currentRoute.value.name !== 'login') {
+        if (!isAuthRoute()) {
+          emitAuthNotice('expired')
           router.replace({ name: 'login' })
         }
       } else {

@@ -2,7 +2,7 @@
 import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { setApiKey, hasApiKey } from "@/api/client";
+import { setApiKey } from "@/api/client";
 import { fetchAuthStatus, loginWithPassword } from "@/api/auth";
 
 const { t } = useI18n();
@@ -13,11 +13,6 @@ const password = ref("");
 const loading = ref(false);
 const errorMsg = ref("");
 const showLockResetHint = ref(false);
-
-// If already has a key, try to go to main page
-if (hasApiKey()) {
-  router.replace("/hermes/chat");
-}
 
 onMounted(async () => {
   try {

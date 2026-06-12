@@ -29,6 +29,7 @@ describe('API Client', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.clearAllMocks()
+    ;(router.currentRoute.value as any).name = 'hermes.chat'
   })
 
   describe('token management', () => {
@@ -113,6 +114,21 @@ describe('API Client', () => {
       await expect(request('/api/hermes/sessions')).rejects.toThrow('Unauthorized')
       expect(hasApiKey()).toBe(false)
       expect(router.replace).toHaveBeenCalledWith({ name: 'login' })
+    })
+
+    it('clears stale token without auth notice or redirect while already on auth pages', async () => {
+      const listener = vi.fn()
+      window.addEventListener('hermes-auth-notice', listener)
+      ;(router.currentRoute.value as any).name = 'login'
+      setApiKey('stale-token')
+      mockFetch.mockResolvedValue({ ok: false, status: 401 })
+
+      await expect(request('/api/hermes/sessions')).rejects.toThrow('Unauthorized')
+
+      expect(hasApiKey()).toBe(false)
+      expect(listener).not.toHaveBeenCalled()
+      expect(router.replace).not.toHaveBeenCalled()
+      window.removeEventListener('hermes-auth-notice', listener)
     })
 
     it('emits a global auth notice on local 403 responses', async () => {

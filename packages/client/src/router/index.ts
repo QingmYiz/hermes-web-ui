@@ -148,13 +148,9 @@ const router = createRouter({
 })
 
 router.beforeEach((to, _from, next) => {
-  // Public pages don't need auth
+  // Public pages don't need auth. Do not trust a stored token here: it may be
+  // expired, and auth pages must stay usable so the user can sign in again.
   if (to.meta.public) {
-    // Already has key, skip login
-    if (to.name === 'login' && hasApiKey()) {
-      next({ path: '/hermes/chat' })
-      return
-    }
     next()
     return
   }

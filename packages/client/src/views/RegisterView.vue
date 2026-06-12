@@ -2,7 +2,7 @@
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { setApiKey, hasApiKey } from "@/api/client";
+import { setApiKey } from "@/api/client";
 import { registerWithPassword } from "@/api/auth";
 
 const { t } = useI18n();
@@ -13,10 +13,6 @@ const password = ref("");
 const confirmPassword = ref("");
 const loading = ref(false);
 const errorMsg = ref("");
-
-if (hasApiKey()) {
-  router.replace("/hermes/chat");
-}
 
 async function handleRegister() {
   const cleanUsername = username.value.trim();
