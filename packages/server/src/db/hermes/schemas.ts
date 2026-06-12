@@ -142,6 +142,47 @@ export const USER_PROFILES_INDEXES = {
 }
 
 // ============================================================================
+// Billing and Credits
+// ============================================================================
+
+export const MODEL_PRICES_TABLE = 'model_prices'
+
+export const MODEL_PRICES_SCHEMA: Record<string, string> = {
+  model: 'TEXT PRIMARY KEY',
+  input_credit_per_1k: 'REAL NOT NULL DEFAULT 0.01',
+  output_credit_per_1k: 'REAL NOT NULL DEFAULT 0.03',
+  input_rmb_per_1k: 'REAL NOT NULL DEFAULT 0.002',
+  output_rmb_per_1k: 'REAL NOT NULL DEFAULT 0.006',
+  created_at: 'INTEGER NOT NULL DEFAULT 0',
+  updated_at: 'INTEGER NOT NULL DEFAULT 0',
+}
+
+export const USER_CREDITS_TABLE = 'user_credits'
+
+export const USER_CREDITS_SCHEMA: Record<string, string> = {
+  user_id: 'INTEGER PRIMARY KEY',
+  balance: 'REAL NOT NULL DEFAULT 0',
+  updated_at: 'INTEGER NOT NULL DEFAULT 0',
+}
+
+export const CREDIT_TRANSACTIONS_TABLE = 'credit_transactions'
+
+export const CREDIT_TRANSACTIONS_SCHEMA: Record<string, string> = {
+  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
+  user_id: 'INTEGER NOT NULL',
+  amount: 'REAL NOT NULL DEFAULT 0',
+  balance_after: 'REAL NOT NULL DEFAULT 0',
+  reason: "TEXT NOT NULL DEFAULT ''",
+  actor_user_id: 'INTEGER',
+  created_at: 'INTEGER NOT NULL DEFAULT 0',
+}
+
+export const CREDIT_TRANSACTIONS_INDEXES = {
+  idx_credit_transactions_user: 'CREATE INDEX IF NOT EXISTS idx_credit_transactions_user ON credit_transactions(user_id)',
+  idx_credit_transactions_created: 'CREATE INDEX IF NOT EXISTS idx_credit_transactions_created ON credit_transactions(created_at)',
+}
+
+// ============================================================================
 // LAN Devices
 // ============================================================================
 
@@ -495,6 +536,11 @@ export function initAllHermesTables(): void {
     syncTable(USER_PROFILES_TABLE, USER_PROFILES_SCHEMA, {
       primaryKey: 'user_id, profile_name',
       indexes: USER_PROFILES_INDEXES,
+    })
+    syncTable(MODEL_PRICES_TABLE, MODEL_PRICES_SCHEMA)
+    syncTable(USER_CREDITS_TABLE, USER_CREDITS_SCHEMA)
+    syncTable(CREDIT_TRANSACTIONS_TABLE, CREDIT_TRANSACTIONS_SCHEMA, {
+      indexes: CREDIT_TRANSACTIONS_INDEXES,
     })
 
     // LAN devices and link request status

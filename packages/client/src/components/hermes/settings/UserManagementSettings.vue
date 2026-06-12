@@ -11,6 +11,7 @@ import {
   type UserRole,
   type UserStatus,
 } from '@/api/auth'
+import { fetchAvailableModelsForProfile, updateDefaultModel, type AvailableModelGroup } from '@/api/hermes/system'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -21,6 +22,11 @@ const users = ref<ManagedUser[]>([])
 const profiles = ref<string[]>([])
 const showModal = ref(false)
 const editingUser = ref<ManagedUser | null>(null)
+const showModelModal = ref(false)
+const modelUser = ref<ManagedUser | null>(null)
+const modelGroups = ref<AvailableModelGroup[]>([])
+const modelLoading = ref(false)
+const modelSaving = ref(false)
 
 const form = reactive({
   username: '',
@@ -28,6 +34,13 @@ const form = reactive({
   role: 'admin' as UserRole,
   status: 'active' as UserStatus,
   profiles: [] as string[],
+  defaultProfile: '',
+})
+
+const modelForm = reactive({
+  profile: '',
+  provider: '',
+  model: '',
 })
 
 const roleOptions = computed(() => [
@@ -41,6 +54,13 @@ const statusOptions = computed(() => [
 ])
 
 const profileOptions = computed(() => profiles.value.map(profile => ({ label: profile, value: profile })))
+const editableProfileOptions = computed(() => form.profiles.map(profile => ({ label: profile, value: profile })))
+const modelProfileOptions = computed(() => (modelUser.value?.profiles || []).map(profile => ({ label: profile, value: profile })))
+const modelProviderOptions = computed(() => modelGroups.value.map(group => ({ label: group.label, value: group.provider })))
+const modelOptions = computed(() => {
+  const group = modelGroups.value.find(item => item.provider === modelForm.provider)
+  return (group?.models || []).map(model => ({ label: model, value: model }))
+})
 
 function resetForm() {
   editingUser.value = null
@@ -49,6 +69,7 @@ function resetForm() {
   form.role = 'admin'
   form.status = 'active'
   form.profiles = []
+  form.defaultProfile = ''
 }
 
 async function loadUsers() {
@@ -76,7 +97,15 @@ function openEdit(user: ManagedUser) {
   form.role = user.role
   form.status = user.status
   form.profiles = [...user.profiles]
+  form.defaultProfile = user.default_profile || user.profiles[0] || ''
   showModal.value = true
+}
+
+function handleProfilesUpdate(value: string[]) {
+  form.profiles = value
+  if (!form.profiles.includes(form.defaultProfile)) {
+    form.defaultProfile = form.profiles[0] || ''
+  }
 }
 
 async function submit() {
@@ -95,13 +124,16 @@ async function submit() {
 
   saving.value = true
   try {
+    const defaultProfile = form.profiles.includes(form.defaultProfile)
+      ? form.defaultProfile
+      : form.profiles[0] || null
     const payload = {
       username: form.username.trim(),
       password: form.password || undefined,
       role: form.role,
       status: form.status,
       profiles: form.role === 'super_admin' ? [] : form.profiles,
-      defaultProfile: form.profiles[0] || null,
+      defaultProfile,
     }
     const res = editingUser.value
       ? await updateManagedUser(editingUser.value.id, payload)
@@ -115,6 +147,68 @@ async function submit() {
     message.error(err.message || t('common.saveFailed'))
   } finally {
     saving.value = false
+  }
+}
+
+async function loadProfileModels() {
+  if (!modelForm.profile) {
+    modelGroups.value = []
+    modelForm.provider = ''
+    modelForm.model = ''
+    return
+  }
+  modelLoading.value = true
+  try {
+    const res = await fetchAvailableModelsForProfile(modelForm.profile)
+    modelGroups.value = res.groups
+    modelForm.provider = res.default_provider || res.groups[0]?.provider || ''
+    const group = modelGroups.value.find(item => item.provider === modelForm.provider) || modelGroups.value[0]
+    modelForm.model = res.default || group?.models[0] || ''
+  } catch (err: any) {
+    message.error(err.message || '模型列表加载失败')
+  } finally {
+    modelLoading.value = false
+  }
+}
+
+function openModelConfig(user: ManagedUser) {
+  modelUser.value = user
+  modelForm.profile = user.default_profile || user.profiles[0] || ''
+  modelForm.provider = ''
+  modelForm.model = ''
+  modelGroups.value = []
+  showModelModal.value = true
+  void loadProfileModels()
+}
+
+async function handleModelProfileUpdate(profile: string) {
+  modelForm.profile = profile
+  await loadProfileModels()
+}
+
+function handleModelProviderUpdate(provider: string) {
+  modelForm.provider = provider
+  modelForm.model = modelOptions.value[0]?.value || ''
+}
+
+async function saveModelConfig() {
+  if (!modelForm.profile || !modelForm.provider || !modelForm.model) {
+    message.error('请选择 profile、模型供应商和模型')
+    return
+  }
+  modelSaving.value = true
+  try {
+    await updateDefaultModel({
+      default: modelForm.model,
+      provider: modelForm.provider,
+      profile: modelForm.profile,
+    })
+    message.success(t('common.saved'))
+    showModelModal.value = false
+  } catch (err: any) {
+    message.error(err.message || t('common.saveFailed'))
+  } finally {
+    modelSaving.value = false
   }
 }
 
@@ -200,6 +294,12 @@ const columns = computed<DataTableColumns<ManagedUser>>(() => [
         h(NButton, { size: 'small', onClick: () => openEdit(row) }, { default: () => t('common.edit') }),
         h(NButton, {
           size: 'small',
+          ghost: true,
+          disabled: row.profiles.length === 0,
+          onClick: () => openModelConfig(row),
+        }, { default: () => '配置模型' }),
+        h(NButton, {
+          size: 'small',
           type: row.status === 'active' ? 'warning' : 'primary',
           ghost: true,
           loading: saving.value,
@@ -257,12 +357,56 @@ onMounted(loadUsers)
             filterable
             :options="profileOptions"
             :placeholder="t('users.profilesPlaceholder')"
+            @update:value="handleProfilesUpdate"
+          />
+        </NFormItem>
+        <NFormItem v-if="form.role !== 'super_admin' && form.profiles.length > 0" label="默认配置">
+          <NSelect
+            v-model:value="form.defaultProfile"
+            :options="editableProfileOptions"
+            placeholder="选择登录后默认使用的 profile"
           />
         </NFormItem>
       </NForm>
       <template #action>
         <NButton @click="showModal = false">{{ t('common.cancel') }}</NButton>
         <NButton type="primary" :loading="saving" @click="submit">{{ t('common.save') }}</NButton>
+      </template>
+    </NModal>
+
+    <NModal v-model:show="showModelModal" preset="dialog" title="配置用户默认模型">
+      <NForm label-placement="top">
+        <NFormItem label="目标用户">
+          <NInput :value="modelUser?.username || ''" readonly />
+        </NFormItem>
+        <NFormItem label="目标 profile">
+          <NSelect
+            :value="modelForm.profile"
+            :options="modelProfileOptions"
+            :loading="modelLoading"
+            @update:value="handleModelProfileUpdate"
+          />
+        </NFormItem>
+        <NFormItem label="供应商">
+          <NSelect
+            v-model:value="modelForm.provider"
+            :options="modelProviderOptions"
+            :loading="modelLoading"
+            @update:value="handleModelProviderUpdate"
+          />
+        </NFormItem>
+        <NFormItem label="默认模型">
+          <NSelect
+            v-model:value="modelForm.model"
+            filterable
+            :options="modelOptions"
+            :loading="modelLoading"
+          />
+        </NFormItem>
+      </NForm>
+      <template #action>
+        <NButton @click="showModelModal = false">{{ t('common.cancel') }}</NButton>
+        <NButton type="primary" :loading="modelSaving" @click="saveModelConfig">{{ t('common.save') }}</NButton>
       </template>
     </NModal>
   </div>

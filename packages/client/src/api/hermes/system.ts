@@ -207,6 +207,7 @@ export async function updateDefaultModel(data: {
   provider?: string
   base_url?: string
   api_key?: string
+  profile?: string
 }): Promise<void> {
   await request('/api/hermes/config/model', {
     method: 'PUT',
@@ -243,6 +244,7 @@ export async function updateProvider(poolKey: string, data: {
   base_url?: string
   api_key?: string
   model?: string
+  profile?: string
 }): Promise<void> {
   await request(`/api/hermes/config/providers/${encodeURIComponent(poolKey)}`, {
     method: 'PUT',

@@ -553,7 +553,7 @@ export async function updateManagedUser(ctx: Context) {
     return
   }
 
-  if (profiles) {
+  if (profiles !== undefined) {
     const missingProfile = validateProfiles(profiles)
     if (missingProfile) {
       ctx.status = 400
