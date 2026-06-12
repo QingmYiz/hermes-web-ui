@@ -27,6 +27,30 @@ export async function loginWithPassword(username: string, password: string): Pro
   return data.token
 }
 
+export interface RegisterResult {
+  token: string
+  profile: string
+}
+
+export async function registerWithPassword(username: string, password: string): Promise<RegisterResult> {
+  const res = await fetch('/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    const err: any = new Error(data.error || 'Registration failed')
+    err.status = res.status
+    throw err
+  }
+  const data = await res.json()
+  return {
+    token: data.token,
+    profile: data.profile,
+  }
+}
+
 export interface CurrentUser {
   id: number
   username: string

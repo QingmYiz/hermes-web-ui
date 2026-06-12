@@ -44,6 +44,14 @@ export default {
     defaultCredentialMessage: '当前登录账户仍在使用默认用户名或默认密码。为了避免未授权访问，请尽快进入当前账户修改用户名和密码。',
     defaultCredentialAction: '去修改',
     defaultCredentialLater: '稍后提醒',
+    registerTitle: '创建账户',
+    registerDescription: '创建你的账户，系统会为你的记忆、技能和 MCP 设置准备独立配置。',
+    registerSubmit: '创建账户',
+    confirmPasswordPlaceholder: '确认密码',
+    needAccount: '还没有账户？立即创建',
+    alreadyHaveAccount: '已有账户？去登录',
+    usernameTaken: '用户名已存在',
+    registrationFailed: '注册失败',
   },
 
   users: {

@@ -21,7 +21,7 @@ const route = useRoute()
 const themeOverrides = computed(() => getThemeOverrides(isDark.value, isComic.value))
 const naiveTheme = computed(() => isDark.value ? darkTheme : null)
 
-const isLoginPage = computed(() => route.name === 'login')
+const isAuthPage = computed(() => route.name === 'login' || route.name === 'register')
 
 const nodeVersionLow = computed(() => {
   const v = appStore.nodeVersion
@@ -39,7 +39,7 @@ watch(() => route.path, () => {
 })
 
 onMounted(() => {
-  if (!isLoginPage.value) {
+  if (!isAuthPage.value) {
     appStore.loadModels()
     appStore.startHealthPolling()
   }
@@ -63,12 +63,12 @@ useKeyboard()
             <div v-if="nodeVersionLow" class="node-warning-bar">
               {{ t('sidebar.nodeVersionWarning', { version: appStore.nodeVersion }) }}
             </div>
-            <div class="app-layout" :class="{ 'no-sidebar': isLoginPage }">
-              <button v-if="!isLoginPage" class="hamburger-btn" @click="appStore.toggleSidebar">
+            <div class="app-layout" :class="{ 'no-sidebar': isAuthPage }">
+              <button v-if="!isAuthPage" class="hamburger-btn" @click="appStore.toggleSidebar">
                 <img src="/logo.png" alt="Menu" style="width: 24px; height: 24px;" />
               </button>
-              <div v-if="!isLoginPage && appStore.sidebarOpen" class="mobile-backdrop" @click="appStore.closeSidebar" />
-              <AppSidebar v-if="!isLoginPage" />
+              <div v-if="!isAuthPage && appStore.sidebarOpen" class="mobile-backdrop" @click="appStore.closeSidebar" />
+              <AppSidebar v-if="!isAuthPage" />
               <main class="app-main">
                 <router-view />
               </main>

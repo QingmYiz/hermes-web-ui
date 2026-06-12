@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('../../packages/server/src/controllers/auth', () => ({
   authStatus: vi.fn(async (ctx: any) => { ctx.body = { ok: true } }),
   login: vi.fn(async (ctx: any) => { ctx.body = { token: 'x' } }),
+  register: vi.fn(async (ctx: any) => { ctx.body = { token: 'x', profile: 'alice' } }),
   setupPassword: vi.fn(async (ctx: any) => { ctx.body = { ok: true } }),
   currentUser: vi.fn(async (ctx: any) => { ctx.body = { user: {} } }),
   changePassword: vi.fn(async (ctx: any) => { ctx.body = { ok: true } }),
@@ -46,6 +47,12 @@ describe('auth routes: avatar endpoints', () => {
   it('mounts PUT /api/auth/avatar on the protected router', async () => {
     const { authProtectedRoutes } = await import('../../packages/server/src/routes/auth')
     const layer = findLayer(authProtectedRoutes, 'PUT', '/api/auth/avatar')
+    expect(layer).toBeDefined()
+  })
+
+  it('mounts POST /api/auth/register on the public router', async () => {
+    const { authPublicRoutes } = await import('../../packages/server/src/routes/auth')
+    const layer = findLayer(authPublicRoutes, 'POST', '/api/auth/register')
     expect(layer).toBeDefined()
   })
 

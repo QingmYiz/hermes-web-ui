@@ -11,6 +11,12 @@ const router = createRouter({
       meta: { public: true },
     },
     {
+      path: '/register',
+      name: 'register',
+      component: () => import('@/views/RegisterView.vue'),
+      meta: { public: true },
+    },
+    {
       path: '/hermes/chat',
       name: 'hermes.chat',
       component: () => import('@/views/hermes/ChatView.vue'),
@@ -137,7 +143,6 @@ const router = createRouter({
       path: '/hermes/mcp',
       name: 'hermes.mcp',
       component: () => import('@/views/hermes/McpManagerView.vue'),
-      meta: { requiresSuperAdmin: true },
     },
   ],
 })

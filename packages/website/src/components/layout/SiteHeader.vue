@@ -3,15 +3,9 @@ import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const router = useRouter()
 const mobileMenuOpen = ref(false)
-
-function switchLocale() {
-  const next = locale.value === 'en' ? 'zh' : 'en'
-  locale.value = next
-  localStorage.setItem('hermes_website_locale', next)
-}
 
 function navigateTo(name: string) {
   router.push({ name })
@@ -48,9 +42,6 @@ function goHome() {
             <line x1="10" y1="14" x2="21" y2="3" />
           </svg>
         </a>
-        <button class="icon-btn" @click="switchLocale" :title="locale === 'en' ? t('ui.switchToChinese') : t('ui.switchToEnglish')">
-          {{ locale === 'en' ? '中' : 'EN' }}
-        </button>
       </nav>
 
       <button class="mobile-toggle" @click="mobileMenuOpen = !mobileMenuOpen" :title="t('ui.menu')">
@@ -67,16 +58,6 @@ function goHome() {
         <a class="mobile-link" @click.prevent="navigateTo('landing')">{{ t('nav.home') }}</a>
         <a class="mobile-link" @click.prevent="navigateTo('docs.getting-started')">{{ t('nav.docs') }}</a>
         <a class="mobile-link" href="https://github.com/EKKOLearnAI/hermes-web-ui" target="_blank" rel="noopener">{{ t('nav.github') }}</a>
-        <div class="mobile-actions">
-          <button class="mobile-action-btn" @click="switchLocale">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="action-icon">
-              <circle cx="12" cy="12" r="10" />
-              <line x1="2" y1="12" x2="22" y2="12" />
-              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-            </svg>
-            {{ locale === 'en' ? t('ui.switchToChinese') : t('ui.switchToEnglish') }}
-          </button>
-        </div>
       </div>
     </div>
   </header>

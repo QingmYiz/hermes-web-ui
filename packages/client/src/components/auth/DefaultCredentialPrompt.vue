@@ -29,7 +29,7 @@ async function checkDefaultCredentials() {
     return;
   }
 
-  if (route.name === "login") {
+  if (route.name === "login" || route.name === "register") {
     show.value = false;
     return;
   }

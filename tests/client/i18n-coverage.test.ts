@@ -4,12 +4,11 @@ import { join, relative } from 'path'
 
 import { changelog } from '@/data/changelog'
 import { messages, supportedLocales } from '@/i18n/messages'
-import en from '@/i18n/locales/en'
-import { createI18n } from 'vue-i18n'
+import zh from '@/i18n/locales/zh'
 
 const SOURCE_ROOT = join(process.cwd(), 'packages/client/src')
 
-const allMessages: Record<string, Record<string, unknown>> = { en }
+const allMessages: Record<string, Record<string, unknown>> = { zh }
 
 function walkFiles(dir: string, files: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -56,29 +55,6 @@ function hasPath(messages: Record<string, unknown>, key: string): boolean {
   return typeof getPath(messages, key) !== 'undefined'
 }
 
-const SKILLS_USAGE_LOCALIZED_KEYS = [
-  'sidebar.skillsUsage',
-  'skillsUsage.title',
-  'skillsUsage.subtitle',
-  'skillsUsage.refresh',
-  'skillsUsage.periodSelector',
-  'skillsUsage.periodLabel',
-  'skillsUsage.summary',
-  'skillsUsage.totalActions',
-  'skillsUsage.loads',
-  'skillsUsage.edits',
-  'skillsUsage.distinctSkills',
-  'skillsUsage.topSkills',
-  'skillsUsage.dailyTrend',
-  'skillsUsage.periodSummary',
-  'skillsUsage.skill',
-  'skillsUsage.share',
-  'skillsUsage.lastUsed',
-  'skillsUsage.noData',
-  'skillsUsage.loadFailed',
-  'skillsUsage.otherSkills',
-]
-
 const SKILLS_USAGE_COMPACT_LABEL_LIMITS: Record<string, number> = {
   'skillsUsage.totalActions': 12,
   'skillsUsage.loads': 10,
@@ -92,23 +68,6 @@ const SKILLS_USAGE_COMPACT_LABEL_LIMITS: Record<string, number> = {
   'skillsUsage.otherSkills': 16,
 }
 
-const APPROVAL_AND_WRITE_GATE_LOCALIZED_KEYS = [
-  'chat.approvalAgree',
-  'skills.writeApprovalTitle',
-  'skills.writeApprovalDescription',
-  'skills.writeApprovalEmpty',
-  'skills.writeApprovalViewDiff',
-  'skills.writeApprovalNoDiff',
-  'skills.writeApprovalApprove',
-  'skills.writeApprovalReject',
-  'skills.writeApprovalPendingMemoryWrite',
-  'skills.writeApprovalCurrentFile',
-  'skills.writeApprovalPatchOldStringMissing',
-  'settings.session.requireAuth',
-  'settings.session.memoryWriteApproval',
-  'settings.session.skillsWriteApproval',
-]
-
 function labelLength(value: unknown): number {
   return typeof value === 'string' ? Array.from(value.replace(/\{[^}]+\}/g, '')).length : Infinity
 }
@@ -121,15 +80,15 @@ describe('i18n locale coverage', () => {
 
   beforeAll(() => {
     for (const l of supportedLocales) {
-      if (l !== 'en' && messages[l]) {
+      if (messages[l]) {
         allMessages[l] = messages[l]
       }
     }
   })
 
-  it('defines every statically referenced translation key in the English source locale', () => {
+  it('defines every statically referenced translation key in the Chinese source locale', () => {
     const missing = collectLiteralTranslationKeys()
-      .filter((key) => !hasPath(en, key))
+      .filter((key) => !hasPath(zh, key))
       .filter((key) => !ALLOWED_MISSING_KEYS.has(key))
 
     expect(missing).toEqual([])
@@ -146,37 +105,6 @@ describe('i18n locale coverage', () => {
 
     expect(missing).toEqual([])
   })
-
-  it('localizes Skills Usage page copy in every non-English locale instead of falling back to English', () => {
-    const englishMessages = messages.en
-    const untranslated = Object.entries(messages).flatMap(([locale, localeMessages]) => {
-      if (locale === 'en') return []
-
-      return SKILLS_USAGE_LOCALIZED_KEYS.flatMap((key) => {
-        const localeValue = getPath(localeMessages, key)
-        if (typeof localeValue === 'undefined') return [`${locale}: ${key} missing`]
-        return localeValue === getPath(englishMessages, key) ? [`${locale}: ${key}`] : []
-      })
-    })
-
-    expect(untranslated).toEqual([])
-  })
-
-  it('localizes approval and write-gate copy in every non-English locale instead of falling back to English', () => {
-    const englishMessages = messages.en
-    const untranslated = Object.entries(messages).flatMap(([locale, localeMessages]) => {
-      if (locale === 'en') return []
-
-      return APPROVAL_AND_WRITE_GATE_LOCALIZED_KEYS.flatMap((key) => {
-        const localeValue = getPath(localeMessages, key)
-        if (typeof localeValue === 'undefined') return [`${locale}: ${key} missing`]
-        return localeValue === getPath(englishMessages, key) ? [`${locale}: ${key}`] : []
-      })
-    })
-
-    expect(untranslated).toEqual([])
-  })
-
 
   it('keeps Skills Usage summary and table labels compact across locales', () => {
     const oversized = Object.entries(messages).flatMap(([locale, localeMessages]) =>
