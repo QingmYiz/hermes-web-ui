@@ -9,15 +9,20 @@ import {
 import { useI18n } from 'vue-i18n'
 import McpServerCard from '@/components/hermes/mcp/McpServerCard.vue'
 import {
+  fetchCommunityMcps,
   fetchMcpServers, fetchMcpTools, mcpServerAdd, mcpServerRemove,
   mcpServerUpdate, mcpServerTest, mcpReload,
-  type McpServerInfo, type McpServerConfig,
+  installCommunityMcp,
+  type CommunityMcpItem, type McpServerInfo, type McpServerConfig,
 } from '@/api/hermes/mcp'
 
 const { t } = useI18n()
 const message = useMessage()
 
 const servers = ref<McpServerInfo[]>([])
+const communityItems = ref<CommunityMcpItem[]>([])
+const communityLoading = ref(false)
+const installingCommunityId = ref('')
 const loading = ref(false)
 const error = ref('')
 const searchQuery = ref('')
@@ -229,6 +234,36 @@ async function loadServers() {
   }
 }
 
+async function loadCommunityMcps() {
+  communityLoading.value = true
+  try {
+    communityItems.value = await fetchCommunityMcps()
+  } catch (err: any) {
+    message.error(err?.message || '社区资源加载失败')
+  } finally {
+    communityLoading.value = false
+  }
+}
+
+async function handleInstallCommunityMcp(item: CommunityMcpItem) {
+  if (item.installed || !item.installable) return
+  installingCommunityId.value = item.id
+  try {
+    const result = await installCommunityMcp(item.id)
+    if (result.ok) {
+      message.success(`已安装：${item.title}`)
+      await Promise.all([loadCommunityMcps(), loadServers()])
+      scheduleReload()
+    } else {
+      message.error(result.error || '安装失败')
+    }
+  } catch (err: any) {
+    message.error(err?.message || '安装失败')
+  } finally {
+    installingCommunityId.value = ''
+  }
+}
+
 async function handleReload(server?: string) {
   try {
     const res = await mcpReload(server)
@@ -377,6 +412,7 @@ async function handleTest(server: McpServerInfo) {
 
 
 void loadServers()
+void loadCommunityMcps()
 
 function openToolsModal(server: McpServerInfo) {
   toolsModalServer.value = server
@@ -524,6 +560,44 @@ async function saveToolsVisibility() {
             <strong>{{ summary.totalTools }}</strong>
           </div>
         </div>
+
+        <section class="community-panel">
+          <div class="community-header">
+            <div>
+              <h3>MCP 社区</h3>
+              <p>英文资源已自动翻译成中文展示，安装后会写入当前用户 Profile。</p>
+            </div>
+            <NButton size="small" quaternary :loading="communityLoading" @click="loadCommunityMcps">
+              刷新
+            </NButton>
+          </div>
+          <div class="community-grid">
+            <article v-for="item in communityItems" :key="item.id" class="community-card">
+              <div class="community-card-main">
+                <div class="community-card-title-row">
+                  <h4>{{ item.title }}</h4>
+                  <span v-if="item.sourceLanguage === 'en'" class="translated-badge">已翻译</span>
+                </div>
+                <p>{{ item.description }}</p>
+                <div v-if="item.sourceLanguage === 'en'" class="source-text">
+                  原文：{{ item.sourceTitle }} - {{ item.sourceDescription }}
+                </div>
+                <div class="community-tags">
+                  <span v-for="tag in item.tags" :key="tag">{{ tag }}</span>
+                </div>
+              </div>
+              <NButton
+                size="small"
+                type="primary"
+                :disabled="item.installed || !item.installable"
+                :loading="installingCommunityId === item.id"
+                @click="handleInstallCommunityMcp(item)"
+              >
+                {{ item.installed ? '已安装' : '安装' }}
+              </NButton>
+            </article>
+          </div>
+        </section>
 
         <div class="toolbar-row">
           <NInput
@@ -709,6 +783,105 @@ async function saveToolsVisibility() {
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 12px;
   margin-bottom: 16px;
+}
+
+.community-panel {
+  margin-bottom: 16px;
+}
+
+.community-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+
+  h3 {
+    margin: 0 0 4px;
+    color: $text-primary;
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  p {
+    margin: 0;
+    color: $text-muted;
+    font-size: 12px;
+  }
+}
+
+.community-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  gap: 10px;
+}
+
+.community-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 190px;
+  padding: 12px;
+  border: 1px solid $border-color;
+  border-radius: $radius-md;
+  background: $bg-secondary;
+}
+
+.community-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.community-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  h4 {
+    margin: 0;
+    color: $text-primary;
+    font-size: 14px;
+    font-weight: 600;
+  }
+}
+
+.community-card p {
+  margin: 0;
+  color: $text-secondary;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.translated-badge {
+  flex-shrink: 0;
+  color: $accent-primary;
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.25);
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 10px;
+}
+
+.source-text {
+  color: $text-muted;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.community-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+
+  span {
+    color: $text-muted;
+    background: $bg-card;
+    border: 1px solid $border-color;
+    border-radius: 999px;
+    padding: 1px 6px;
+    font-size: 10px;
+  }
 }
 
 .summary-card {

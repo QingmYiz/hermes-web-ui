@@ -1,4 +1,5 @@
 import type { Context } from 'koa'
+import { installCommunityMcp, listCommunityMcps } from '../../services/hermes/community-catalog'
 import { bridgeMcpAction } from '../../services/hermes/mcp'
 
 function getProfile(ctx: Context): string | undefined {
@@ -116,5 +117,35 @@ export async function reloadMcp(ctx: Context) {
   } catch (err: any) {
     ctx.status = 503
     ctx.body = { error: err.message || 'Failed to reload MCP' }
+  }
+}
+
+export async function community(ctx: Context) {
+  try {
+    ctx.body = { items: await listCommunityMcps(getProfile(ctx)) }
+  } catch (err: any) {
+    ctx.status = 503
+    ctx.body = { error: err.message || 'Failed to list MCP community' }
+  }
+}
+
+export async function installCommunity(ctx: Context) {
+  try {
+    const id = String(((ctx.request.body || {}) as any).id || '').trim()
+    if (!id) {
+      ctx.status = 400
+      ctx.body = { error: 'id is required' }
+      return
+    }
+    const result = await installCommunityMcp(getProfile(ctx), id)
+    if (!result.ok) {
+      ctx.status = 404
+      ctx.body = { error: result.error || 'Community MCP not found' }
+      return
+    }
+    ctx.body = result
+  } catch (err: any) {
+    ctx.status = 503
+    ctx.body = { error: err.message || 'Failed to install community MCP' }
   }
 }

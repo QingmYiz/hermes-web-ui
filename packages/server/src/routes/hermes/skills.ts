@@ -5,6 +5,8 @@ export const skillRoutes = new Router()
 
 skillRoutes.get('/api/hermes/skills', ctrl.list)
 skillRoutes.get('/api/hermes/skills/usage/stats', ctrl.usageStats)
+skillRoutes.get('/api/hermes/skills/community', ctrl.community)
+skillRoutes.post('/api/hermes/skills/community/install', ctrl.installCommunity)
 skillRoutes.get('/api/hermes/skills/external-dirs', ctrl.listExternalDirs)
 skillRoutes.put('/api/hermes/skills/external-dirs', ctrl.updateExternalDirs)
 skillRoutes.put('/api/hermes/skills/toggle', ctrl.toggle)

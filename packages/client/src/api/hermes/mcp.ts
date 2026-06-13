@@ -48,6 +48,20 @@ export interface McpServerConfig {
   resources?: boolean
 }
 
+export interface CommunityMcpItem {
+  id: string
+  name: string
+  title: string
+  description: string
+  sourceTitle: string
+  sourceDescription: string
+  sourceLanguage: 'en' | 'zh'
+  tags: string[]
+  installable: boolean
+  config: McpServerConfig
+  installed?: boolean
+}
+
 export async function fetchMcpServers(): Promise<McpServersResponse> {
   return request<McpServersResponse>('/api/hermes/mcp/servers')
 }
@@ -87,4 +101,16 @@ export async function mcpReload(name?: string): Promise<{ ok: boolean; message?:
 
 export async function mcpServerTest(name: string): Promise<{ ok: boolean; tools?: string[]; error?: string }> {
   return request(`/api/hermes/mcp/servers/${encodeURIComponent(name)}/test`, { method: 'POST' })
+}
+
+export async function fetchCommunityMcps(): Promise<CommunityMcpItem[]> {
+  const res = await request<{ items: CommunityMcpItem[] }>('/api/hermes/mcp/community')
+  return res.items ?? []
+}
+
+export async function installCommunityMcp(id: string): Promise<{ ok: boolean; item?: CommunityMcpItem; error?: string }> {
+  return request('/api/hermes/mcp/community/install', {
+    method: 'POST',
+    body: JSON.stringify({ id }),
+  })
 }

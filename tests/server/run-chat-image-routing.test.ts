@@ -107,15 +107,17 @@ describe('run chat image routing', () => {
     })
   })
 
-  it('falls back to the global Hermes config when the user profile lacks the image provider', async () => {
-    mockReadConfigYamlForProfile.mockResolvedValueOnce({})
-    mockReadConfigYaml.mockResolvedValueOnce({
-      custom_providers: [{
-        name: 'WebAI2API Doubao',
-        base_url: 'http://127.0.0.1:3000/v1',
-        api_key: 'sk-global',
-        model: 'seedream-4.5',
-      }],
+  it('falls back to the default Hermes profile when the user profile lacks the image provider', async () => {
+    mockReadConfigYamlForProfile.mockImplementation(async (profile: string) => {
+      if (profile !== 'default') return {}
+      return {
+        custom_providers: [{
+          name: 'WebAI2API Doubao',
+          base_url: 'http://127.0.0.1:3000/v1',
+          api_key: 'sk-default',
+          model: 'seedream-4.5',
+        }],
+      }
     })
     const { resolveImageGenerationProviderRuntime } = await import('../../packages/server/src/services/hermes/run-chat/image-routing')
 
@@ -126,7 +128,7 @@ describe('run chat image routing', () => {
       provider: 'custom:webai2api-doubao',
       model: 'seedream-4.5',
       baseUrl: 'http://127.0.0.1:3000/v1',
-      apiKey: 'sk-global',
+      apiKey: 'sk-default',
     })
   })
 
@@ -185,6 +187,67 @@ describe('run chat image routing', () => {
       method: 'POST',
       body: expect.stringContaining('"model":"seedream-4.5"'),
     }))
+    expect(readFileSync(result.images[0].path)).toEqual(pngBytes)
+  })
+
+  it('falls back when the images endpoint rejects chat-backed image models', async () => {
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x03])
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{
+            message: {
+              content: [{
+                type: 'image_url',
+                image_url: { url: `data:image/png;base64,${pngBytes.toString('base64')}` },
+              }],
+            },
+          }],
+        }),
+      })
+    const { readFileSync } = await import('node:fs')
+    const { generateImageForChat } = await import('../../packages/server/src/services/hermes/run-chat/image-routing')
+
+    const result = await generateImageForChat('default', '帮我生成图片', {
+      provider: 'custom:webai2api-doubao',
+      model: 'seedream-4.5',
+    })
+
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:8080/v1/chat/completions', expect.objectContaining({
+      method: 'POST',
+      body: expect.stringContaining('"model":"seedream-4.5"'),
+    }))
+    expect(readFileSync(result.images[0].path)).toEqual(pngBytes)
+  })
+
+  it('falls back to chat completions when the images endpoint returns no image data', async () => {
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x04])
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          images: [{ result: pngBytes.toString('base64') }],
+        }),
+      })
+    const { readFileSync } = await import('node:fs')
+    const { generateImageForChat } = await import('../../packages/server/src/services/hermes/run-chat/image-routing')
+
+    const result = await generateImageForChat('default', 'draw an image of a train', {
+      provider: 'custom:webai2api-doubao',
+      model: 'seedream-4.5',
+    })
+
+    expect(mockFetch).toHaveBeenCalledTimes(2)
     expect(readFileSync(result.images[0].path)).toEqual(pngBytes)
   })
 })

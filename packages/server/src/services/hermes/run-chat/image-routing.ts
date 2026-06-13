@@ -157,6 +157,7 @@ export async function resolveImageGenerationProviderRuntime(
 
   const profileConfig = await readConfigYamlForProfile(profile)
   const customProvider = findCustomProvider(profileConfig, providerKey)
+    || (profile !== 'default' ? findCustomProvider(await readConfigYamlForProfile('default'), providerKey) : null)
     || findCustomProvider(await readConfigYaml(), providerKey)
   if (customProvider) {
     const baseUrl = String(customProvider.base_url || '').trim()
@@ -209,21 +210,31 @@ function collectImageItemsFromString(value: string, images: Array<{ base64?: str
 }
 
 function collectImageItems(value: unknown, images: Array<{ base64?: string; url?: string }> = []): Array<{ base64?: string; url?: string }> {
+  if (Array.isArray(value)) {
+    for (const item of value) collectImageItems(item, images)
+    return images
+  }
   if (typeof value === 'string') {
     collectImageItemsFromString(value, images)
     return images
   }
   if (!value || typeof value !== 'object') return images
   const record = value as Record<string, unknown>
-  for (const key of ['b64_json', 'base64', 'image_base64', 'result']) {
+  for (const key of ['b64_json', 'base64', 'image_base64', 'image', 'result']) {
     if (typeof record[key] === 'string' && record[key]) {
-      images.push({ base64: record[key] as string })
+      const raw = record[key] as string
+      if (/^https?:\/\//i.test(raw)) images.push({ url: raw })
+      else images.push({ base64: raw })
     }
   }
   if (typeof record.url === 'string' && record.url) {
-    images.push({ url: record.url })
+    if (record.url.startsWith('data:image/')) {
+      images.push({ base64: record.url })
+    } else {
+      images.push({ url: record.url })
+    }
   }
-  for (const key of ['data', 'output']) {
+  for (const key of ['data', 'output', 'images']) {
     const list = record[key]
     if (Array.isArray(list)) {
       for (const item of list) collectImageItems(item, images)
@@ -232,13 +243,37 @@ function collectImageItems(value: unknown, images: Array<{ base64?: string; url?
   for (const key of ['content', 'text']) {
     if (typeof record[key] === 'string') {
       collectImageItemsFromString(record[key] as string, images)
+    } else if (record[key]) {
+      collectImageItems(record[key], images)
     }
   }
-  if (record.message) collectImageItems(record.message, images)
+  for (const key of ['message', 'image_url', 'source']) {
+    if (record[key]) collectImageItems(record[key], images)
+  }
   if (Array.isArray(record.choices)) {
     for (const choice of record.choices) collectImageItems(choice, images)
   }
   return images
+}
+
+function shouldFallbackToChatCompletions(status: number): boolean {
+  return [400, 404, 405, 422].includes(status)
+}
+
+async function readJsonResponse(response: Response): Promise<unknown> {
+  try {
+    return await response.json()
+  } catch {
+    return null
+  }
+}
+
+async function readTextResponse(response: Response): Promise<string> {
+  try {
+    return await response.text()
+  } catch {
+    return ''
+  }
 }
 
 async function imageBytesFromUrl(url: string): Promise<Buffer> {
@@ -284,7 +319,7 @@ export async function generateImageForChat(
   }
   if (runtime.apiKey) headers.Authorization = `Bearer ${runtime.apiKey}`
 
-  let response = await fetch(buildApiUrl(runtime.baseUrl, '/v1/images/generations'), {
+  const imagesEndpointResponse = await fetch(buildApiUrl(runtime.baseUrl, '/v1/images/generations'), {
     method: 'POST',
     headers,
     signal: AbortSignal.timeout(10 * 60 * 1000),
@@ -298,7 +333,21 @@ export async function generateImageForChat(
     }),
   })
 
-  if (response.status === 404) {
+  let response = imagesEndpointResponse
+  let responseBody: unknown = null
+  let items: Array<{ base64?: string; url?: string }> = []
+
+  if (imagesEndpointResponse.ok) {
+    responseBody = await readJsonResponse(imagesEndpointResponse)
+    items = collectImageItems(responseBody)
+  }
+
+  if (!imagesEndpointResponse.ok && !shouldFallbackToChatCompletions(imagesEndpointResponse.status)) {
+    const detail = await readTextResponse(imagesEndpointResponse)
+    throw new Error(`image generation request failed: ${imagesEndpointResponse.status} ${detail || imagesEndpointResponse.statusText}`)
+  }
+
+  if (!imagesEndpointResponse.ok || items.length === 0) {
     response = await fetch(buildApiUrl(runtime.baseUrl, '/v1/chat/completions'), {
       method: 'POST',
       headers,
@@ -309,15 +358,16 @@ export async function generateImageForChat(
         stream: false,
       }),
     })
+
+    if (!response.ok) {
+      const detail = await readTextResponse(response)
+      throw new Error(`image generation request failed: ${response.status} ${detail || response.statusText}`)
+    }
+
+    responseBody = await readJsonResponse(response)
+    items = collectImageItems(responseBody)
   }
 
-  if (!response.ok) {
-    const detail = await response.text().catch(() => '')
-    throw new Error(`image generation request failed: ${response.status} ${detail || response.statusText}`)
-  }
-
-  const responseBody = await response.json()
-  const items = collectImageItems(responseBody)
   if (items.length === 0) {
     throw new Error('image generation response did not contain an image')
   }

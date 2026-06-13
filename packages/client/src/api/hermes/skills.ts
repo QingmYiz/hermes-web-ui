@@ -102,6 +102,20 @@ export interface SkillUsageStats {
   top_skills: SkillUsageRow[]
 }
 
+export interface CommunitySkillItem {
+  id: string
+  name: string
+  title: string
+  description: string
+  sourceTitle: string
+  sourceDescription: string
+  sourceLanguage: 'en' | 'zh'
+  category: string
+  tags: string[]
+  installable: boolean
+  installed?: boolean
+}
+
 export async function fetchSkills(): Promise<SkillsData> {
   const res = await request<SkillListResponse>('/api/hermes/skills')
   return { categories: res.categories, archived: res.archived ?? [], paths: res.paths }
@@ -110,6 +124,18 @@ export async function fetchSkills(): Promise<SkillsData> {
 export async function fetchSkillUsageStats(days = 7): Promise<SkillUsageStats> {
   const params = new URLSearchParams({ days: String(days) })
   return request<SkillUsageStats>(`/api/hermes/skills/usage/stats?${params}`)
+}
+
+export async function fetchCommunitySkills(): Promise<CommunitySkillItem[]> {
+  const res = await request<{ items: CommunitySkillItem[] }>('/api/hermes/skills/community')
+  return res.items ?? []
+}
+
+export async function installCommunitySkill(id: string): Promise<{ ok: boolean; item?: CommunitySkillItem; error?: string }> {
+  return request('/api/hermes/skills/community/install', {
+    method: 'POST',
+    body: JSON.stringify({ id }),
+  })
 }
 
 export async function fetchSkillContent(skillPath: string): Promise<string> {

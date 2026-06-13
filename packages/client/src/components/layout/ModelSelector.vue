@@ -2,11 +2,13 @@
 import { ref, computed } from 'vue'
 import { NModal, NInput, NSelect } from 'naive-ui'
 import { useAppStore } from '@/stores/hermes/app'
+import { useChatStore } from '@/stores/hermes/chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const chatStore = useChatStore()
 const profilesStore = useProfilesStore()
 
 const showModal = ref(false)
@@ -83,10 +85,18 @@ function isGroupCollapsed(provider: string) {
   return !!collapsedGroups.value[provider]
 }
 
-function handleSelect(model: string, provider: string) {
+async function persistModelSelection(model: string, provider: string) {
+  await appStore.switchModel(model, provider)
+  const activeSession = chatStore.activeSession
+  if (activeSession && activeSession.source !== 'coding_agent') {
+    await chatStore.switchSessionModel(model, provider, activeSession.id)
+  }
+}
+
+async function handleSelect(model: string, provider: string) {
   const meta = activeModelGroups.value.find(g => g.provider === provider)?.model_meta?.[model]
   if (meta?.disabled) return
-  appStore.switchModel(model, provider)
+  await persistModelSelection(model, provider)
   showModal.value = false
   searchQuery.value = ''
 }
@@ -99,13 +109,12 @@ function modelAlias(model: string, provider: string) {
   return appStore.getModelAlias(model, provider)
 }
 
-function handleCustomSubmit() {
+async function handleCustomSubmit() {
   const model = customInput.value.trim()
   if (!model || !customProvider.value) return
-  // 拦截 disabled 模型，避免 custom input 绕过列表里的灰显限制
   const meta = activeModelGroups.value.find(g => g.provider === customProvider.value)?.model_meta?.[model]
   if (meta?.disabled) return
-  appStore.switchModel(model, customProvider.value)
+  await persistModelSelection(model, customProvider.value)
   showModal.value = false
   searchQuery.value = ''
   customInput.value = ''

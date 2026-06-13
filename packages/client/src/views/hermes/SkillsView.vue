@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { NBadge, NButton, NDrawer, NDrawerContent, NInput } from 'naive-ui'
+import { NBadge, NButton, NDrawer, NDrawerContent, NInput, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import SkillList from '@/components/hermes/skills/SkillList.vue'
 import SkillDetail from '@/components/hermes/skills/SkillDetail.vue'
@@ -8,16 +8,28 @@ import SkillImportModal from '@/components/hermes/skills/SkillImportModal.vue'
 import SkillExternalDirsModal from '@/components/hermes/skills/SkillExternalDirsModal.vue'
 import PendingWriteApprovals from '@/components/hermes/skills/PendingWriteApprovals.vue'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
-import { fetchSkills, type SkillCategory, type SkillSource, type SkillInfo } from '@/api/hermes/skills'
+import {
+  fetchCommunitySkills,
+  fetchSkills,
+  installCommunitySkill,
+  type CommunitySkillItem,
+  type SkillCategory,
+  type SkillInfo,
+  type SkillSource,
+} from '@/api/hermes/skills'
 import { fetchPendingWrites } from '@/api/hermes/write-gate'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 
 type SourceFilter = SkillSource | 'modified'
 
 const { t, locale } = useI18n()
+const message = useMessage()
 const profilesStore = useProfilesStore()
 const categories = ref<SkillCategory[]>([])
 const archived = ref<SkillInfo[]>([])
+const communityItems = ref<CommunitySkillItem[]>([])
+const communityLoading = ref(false)
+const installingCommunityId = ref('')
 const loading = ref(false)
 const selectedCategory = ref('')
 const selectedSkill = ref('')
@@ -57,6 +69,7 @@ onMounted(() => {
   handleMobileChange(mobileQuery)
   mobileQuery.addEventListener('change', handleMobileChange)
   loadSkills()
+  loadCommunitySkills()
   loadRecommendations()
   loadPendingWriteCount()
 })
@@ -78,6 +91,35 @@ async function loadSkills() {
     console.error('Failed to load skills:', err)
   } finally {
     loading.value = false
+  }
+}
+
+async function loadCommunitySkills() {
+  communityLoading.value = true
+  try {
+    communityItems.value = await fetchCommunitySkills()
+  } catch (err: any) {
+    console.error('Failed to load skill community:', err)
+  } finally {
+    communityLoading.value = false
+  }
+}
+
+async function handleInstallCommunitySkill(item: CommunitySkillItem) {
+  if (item.installed || !item.installable) return
+  installingCommunityId.value = item.id
+  try {
+    const result = await installCommunitySkill(item.id)
+    if (result.ok) {
+      message.success(`已安装：${item.title}`)
+      await Promise.all([loadCommunitySkills(), loadSkills()])
+    } else {
+      message.error(result.error || '安装失败')
+    }
+  } catch (err: any) {
+    message.error(err?.message || '安装失败')
+  } finally {
+    installingCommunityId.value = ''
   }
 }
 
@@ -293,6 +335,43 @@ function handlePinToggled(name: string, pinned: boolean) {
               @pin-toggled="handlePinToggled"
             />
             <div v-else class="recommendations-panel">
+              <section class="community-panel">
+                <div class="community-header">
+                  <div>
+                    <h3>技能社区</h3>
+                    <p>英文资源已自动翻译成中文展示，安装后会写入当前用户 Profile。</p>
+                  </div>
+                  <NButton size="small" quaternary :loading="communityLoading" @click="loadCommunitySkills">
+                    刷新
+                  </NButton>
+                </div>
+                <div class="community-grid">
+                  <article v-for="item in communityItems" :key="item.id" class="community-card">
+                    <div class="community-card-main">
+                      <div class="community-card-title-row">
+                        <h4>{{ item.title }}</h4>
+                        <span v-if="item.sourceLanguage === 'en'" class="translated-badge">已翻译</span>
+                      </div>
+                      <p>{{ item.description }}</p>
+                      <div v-if="item.sourceLanguage === 'en'" class="source-text">
+                        原文：{{ item.sourceTitle }} - {{ item.sourceDescription }}
+                      </div>
+                      <div class="community-tags">
+                        <span v-for="tag in item.tags" :key="tag">{{ tag }}</span>
+                      </div>
+                    </div>
+                    <NButton
+                      size="small"
+                      type="primary"
+                      :disabled="item.installed || !item.installable"
+                      :loading="installingCommunityId === item.id"
+                      @click="handleInstallCommunitySkill(item)"
+                    >
+                      {{ item.installed ? '已安装' : '安装' }}
+                    </NButton>
+                  </article>
+                </div>
+              </section>
               <MarkdownRenderer v-if="recommendations" :content="recommendations" />
               <div v-else class="empty-detail">
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.2">
@@ -514,6 +593,105 @@ function handlePinToggled(name: string, pinned: boolean) {
   :deep(.markdown-body) {
     font-size: 14px;
     line-height: 1.7;
+  }
+}
+
+.community-panel {
+  margin-bottom: 20px;
+}
+
+.community-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+
+  h3 {
+    margin: 0 0 4px;
+    color: $text-primary;
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  p {
+    margin: 0;
+    color: $text-muted;
+    font-size: 12px;
+  }
+}
+
+.community-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  gap: 10px;
+}
+
+.community-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 180px;
+  padding: 12px;
+  border: 1px solid $border-color;
+  border-radius: $radius-md;
+  background: $bg-secondary;
+}
+
+.community-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.community-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  h4 {
+    margin: 0;
+    color: $text-primary;
+    font-size: 14px;
+    font-weight: 600;
+  }
+}
+
+.community-card p {
+  margin: 0;
+  color: $text-secondary;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.translated-badge {
+  flex-shrink: 0;
+  color: $accent-primary;
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.25);
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 10px;
+}
+
+.source-text {
+  color: $text-muted;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.community-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+
+  span {
+    color: $text-muted;
+    background: $bg-card;
+    border: 1px solid $border-color;
+    border-radius: 999px;
+    padding: 1px 6px;
+    font-size: 10px;
   }
 }
 </style>

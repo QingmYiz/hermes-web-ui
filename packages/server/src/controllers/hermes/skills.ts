@@ -11,6 +11,7 @@ import type { SkillSource } from '../../services/config-helpers'
 import { isPathWithin } from '../../services/hermes/hermes-path'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
 import { getSkillUsageStatsFromDb } from '../../db/hermes/sessions-db'
+import { installCommunitySkill, listCommunitySkills } from '../../services/hermes/community-catalog'
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
@@ -484,6 +485,36 @@ export async function usageStats(ctx: any) {
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: `Failed to read skill usage stats: ${err.message}` }
+  }
+}
+
+export async function community(ctx: any) {
+  try {
+    ctx.body = { items: await listCommunitySkills(requestedProfile(ctx)) }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message || 'Failed to list community skills' }
+  }
+}
+
+export async function installCommunity(ctx: any) {
+  const id = String((ctx.request.body as any)?.id || '').trim()
+  if (!id) {
+    ctx.status = 400
+    ctx.body = { error: 'id is required' }
+    return
+  }
+  try {
+    const result = await installCommunitySkill(requestedProfile(ctx), id)
+    if (!result.ok) {
+      ctx.status = 404
+      ctx.body = { error: result.error || 'Community skill not found' }
+      return
+    }
+    ctx.body = result
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message || 'Failed to install community skill' }
   }
 }
 
