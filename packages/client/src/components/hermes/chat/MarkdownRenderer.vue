@@ -136,6 +136,35 @@ function normalizeLocalFilePath(path: string): string {
 
 const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'mov'])
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'])
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp', 'avif'])
+const ARTIFACT_EXTENSIONS = new Set([
+  ...IMAGE_EXTENSIONS,
+  ...VIDEO_EXTENSIONS,
+  ...AUDIO_EXTENSIONS,
+  'pdf',
+  'doc',
+  'docx',
+  'xls',
+  'xlsx',
+  'ppt',
+  'pptx',
+  'txt',
+  'md',
+  'markdown',
+  'csv',
+  'json',
+  'zip',
+  'rar',
+  '7z',
+  'apk',
+  'ipa',
+])
+const ARTIFACT_EXTENSION_PATTERN = Array.from(ARTIFACT_EXTENSIONS)
+  .sort((a, b) => b.length - a.length)
+  .join('|')
+const WINDOWS_ARTIFACT_PATH_RE = new RegExp(`[A-Za-z]:[\\\\/][^\\r\\n\\t<>"'\`]+?\\.(${ARTIFACT_EXTENSION_PATTERN})\\b`, 'gi')
+const UNIX_ARTIFACT_PATH_RE = new RegExp(`/(?:[^\\r\\n\\t<>"'\`]+/)*[^\\r\\n\\t<>"'\`]+?\\.(${ARTIFACT_EXTENSION_PATTERN})\\b`, 'gi')
+const MARKDOWN_PROTECTED_RE = /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`|!?\[[^\]\n]*\]\([^)\n]*\)|!?\[[^\]\n]*\]\(<[^>\n]*>\))/g
 
 function hasExtension(path: string, extensions: Set<string>): boolean {
   const clean = path.split('?')[0].split('#')[0]
@@ -143,8 +172,65 @@ function hasExtension(path: string, extensions: Set<string>): boolean {
   return !!ext && extensions.has(ext)
 }
 
+function fileNameFromPath(path: string): string {
+  const clean = path.split('?')[0].split('#')[0]
+  return safeDecodeURIComponent(clean.split(/[\\/]/).pop() || clean)
+}
+
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
+function escapeMarkdownLabel(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/]/g, '\\]')
+}
+
+function escapeMarkdownDestination(value: string): string {
+  return value.replace(/\\/g, '/').replace(/>/g, '\\>')
+}
+
+function shouldSkipBarePathReplacement(segment: string, offset: number): boolean {
+  const previous = offset > 0 ? segment[offset - 1] : ''
+  const previousTwo = offset > 1 ? segment.slice(offset - 2, offset) : ''
+  return previous === ':' || previous === '/' || previousTwo === '](' || previousTwo === ']="'
+}
+
+function replaceBarePathsInSegment(segment: string, regex: RegExp): string {
+  return segment.replace(regex, (match, ext: string, offset: number) => {
+    if (shouldSkipBarePathReplacement(segment, offset)) return match
+    const fileName = fileNameFromPath(match)
+    const destination = escapeMarkdownDestination(normalizeLocalFilePath(match))
+    const label = escapeMarkdownLabel(fileName)
+    if (IMAGE_EXTENSIONS.has(String(ext).toLowerCase())) {
+      return `![${label}](<${destination}>)`
+    }
+    return `[${label}](<${destination}>)`
+  })
+}
+
+function enhanceBareLocalFilePaths(content: string): string {
+  return content
+    .split(MARKDOWN_PROTECTED_RE)
+    .map((segment) => {
+      if (!segment || MARKDOWN_PROTECTED_RE.test(segment)) {
+        MARKDOWN_PROTECTED_RE.lastIndex = 0
+        return segment
+      }
+      MARKDOWN_PROTECTED_RE.lastIndex = 0
+      return replaceBarePathsInSegment(
+        replaceBarePathsInSegment(segment, WINDOWS_ARTIFACT_PATH_RE),
+        UNIX_ARTIFACT_PATH_RE,
+      )
+    })
+    .join('')
+}
+
 const renderedHtml = computed(() => {
-  let html = md.render(repairNestedMarkdownFences(props.content))
+  let html = md.render(enhanceBareLocalFilePaths(repairNestedMarkdownFences(props.content)))
 
   // Add IDs to headings for anchor links
   const prefix = props.headingIdPrefix ? `${props.headingIdPrefix}-` : ''
@@ -214,11 +300,16 @@ const renderedHtml = computed(() => {
 
     // Other files: render as file card
     return `<div class="markdown-file-card" data-path="${path}" data-filename="${fileName}" title="${t('download.downloadFile')}">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-        <polyline points="14 2 14 8 20 8" />
-      </svg>
-      <span class="att-name">${fileName}</span>
+      <span class="att-icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+        </svg>
+      </span>
+      <span class="att-main">
+        <span class="att-name">${fileName}</span>
+        <span class="att-meta">${t('download.generatedFile')}</span>
+      </span>
       <button class="att-download-btn" type="button" title="${t('download.downloadFile')}" aria-label="${t('download.downloadFile')}">
         <svg class="att-download-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -659,27 +750,59 @@ function closeTextPreview(): void {
   .markdown-file-card {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 10px;
+    gap: 10px;
+    width: min(320px, 100%);
+    max-width: 100%;
+    padding: 10px 12px;
     font-size: 12px;
-    color: $text-secondary;
-    background-color: rgba(0, 0, 0, 0.04);
+    color: $text-primary;
+    background-color: $bg-card;
     border: 1px solid $border-light;
-    border-radius: $radius-sm;
+    border-radius: 8px;
     margin: 8px 0;
     cursor: pointer;
+    box-sizing: border-box;
     transition: background-color 0.15s ease, border-color 0.15s ease;
 
     &:hover {
-      background-color: rgba(0, 0, 0, 0.08);
+      background-color: rgba(var(--accent-primary-rgb), 0.04);
       border-color: $border-color;
+    }
+
+    .att-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 36px;
+      width: 36px;
+      height: 36px;
+      border-radius: $radius-sm;
+      color: $accent-primary;
+      background: rgba(var(--accent-primary-rgb), 0.08);
+    }
+
+    .att-main {
+      display: flex;
+      flex: 1 1 auto;
+      min-width: 0;
+      flex-direction: column;
+      gap: 2px;
     }
 
     .att-name {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      max-width: 160px;
+      max-width: 100%;
+      color: $text-primary;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .att-meta {
+      color: $text-muted;
+      font-size: 11px;
+      line-height: 1.3;
     }
 
     .att-download-icon {
@@ -693,13 +816,20 @@ function closeTextPreview(): void {
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
-      width: 18px;
-      height: 18px;
+      width: 28px;
+      height: 28px;
       padding: 0;
       color: inherit;
-      background: transparent;
-      border: 0;
+      background: rgba(0, 0, 0, 0.03);
+      border: 1px solid transparent;
+      border-radius: 50%;
       cursor: pointer;
+
+      &:hover {
+        color: $accent-primary;
+        background: rgba(var(--accent-primary-rgb), 0.08);
+        border-color: rgba(var(--accent-primary-rgb), 0.12);
+      }
     }
 
     &:hover .att-download-icon,

@@ -35,6 +35,7 @@ const syncBridgeReasoningToMessageMock = vi.fn()
 const recordBridgeToolStartedMock = vi.fn()
 const recordBridgeToolCompletedMock = vi.fn()
 const resolveBridgeRunModelConfigMock = vi.fn()
+const resolveImageGenerationRunTargetMock = vi.fn()
 
 vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
   getSystemPrompt: getSystemPromptMock,
@@ -87,6 +88,10 @@ vi.mock('../../packages/server/src/services/hermes/run-chat/model-config', () =>
   resolveBridgeRunModelConfig: resolveBridgeRunModelConfigMock,
 }))
 
+vi.mock('../../packages/server/src/services/hermes/run-chat/image-routing', () => ({
+  resolveImageGenerationRunTarget: resolveImageGenerationRunTargetMock,
+}))
+
 function makeSocket() {
   return {
     connected: true,
@@ -119,6 +124,7 @@ describe('bridge run final context usage', () => {
     getSystemPromptMock.mockReturnValue('system prompt')
     getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default', model: '', provider: '' })
     resolveBridgeRunModelConfigMock.mockResolvedValue({ model: 'gpt-test', provider: 'openai' })
+    resolveImageGenerationRunTargetMock.mockResolvedValue(null)
     buildCompressedHistoryMock.mockResolvedValue([{ role: 'user', content: 'previous' }])
     buildDbHistoryMock.mockResolvedValue([
       { role: 'user', content: 'hello' },
@@ -194,6 +200,61 @@ describe('bridge run final context usage', () => {
       outputTokens: 7,
       contextTokens: 12345,
     }))
+  })
+
+  it('temporarily routes image-generation prompts to the configured image model without changing the session model', async () => {
+    resolveImageGenerationRunTargetMock.mockResolvedValue({
+      provider: 'custom:webai2api-doubao',
+      model: 'doubao-seedream-4-0',
+    })
+
+    const emit = vi.fn()
+    const nsp = makeNamespace(emit)
+    const socket = makeSocket()
+    const state = makeState()
+    const sessionMap = new Map([['session-1', state]])
+    const bridge = {
+      chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
+      contextEstimate: vi.fn().mockResolvedValue({
+        token_count: 12345,
+        fixed_context_tokens: 12327,
+        message_count: 2,
+        tool_count: 4,
+        system_prompt_chars: 13,
+      }),
+      streamOutput: vi.fn(async function* () {
+        yield { run_id: 'run-1', done: true, status: 'completed', output: 'done' }
+      }),
+    } as any
+
+    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    await handleBridgeRun(
+      nsp,
+      socket,
+      { input: '帮我生成一张产品海报', session_id: 'session-1' },
+      'default',
+      sessionMap,
+      bridge,
+      false,
+      vi.fn(),
+      vi.fn(),
+    )
+
+    expect(updateSessionMock).toHaveBeenCalledWith('session-1', {
+      model: 'gpt-test',
+      provider: 'openai',
+    })
+    expect(bridge.chat).toHaveBeenCalledWith(
+      'session-1',
+      '帮我生成一张产品海报',
+      expect.any(Array),
+      expect.stringContaining('Image generation routing is enabled for this run'),
+      'default',
+      expect.objectContaining({
+        model: 'doubao-seedream-4-0',
+        provider: 'custom:webai2api-doubao',
+      }),
+    )
   })
 
   it('evaluates active goals after a successful bridge run and queues continuation prompts', async () => {

@@ -4,7 +4,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
-import { getApiKey, getBaseUrlValue } from "@/api/client";
+import { getApiKey, getBaseUrlValue, request } from "@/api/client";
 import { NButton, NPopconfirm, NTooltip, NSelect, useMessage } from "naive-ui";
 import { useI18n } from "vue-i18n";
 import type { ITheme } from "@xterm/xterm";
@@ -86,6 +86,11 @@ interface SessionInfo {
   exited: boolean;
 }
 
+interface TerminalStatus {
+  available: boolean;
+  reason?: string | null;
+}
+
 // ─── State ──────────────────────────────────────────────────────
 
 const terminalRef = ref<HTMLDivElement | null>(null);
@@ -159,16 +164,41 @@ function buildWsUrl(): string {
   return `${wsProtocol}//${host}/api/hermes/terminal${token ? `?token=${encodeURIComponent(token)}` : ""}`;
 }
 
-function connect() {
+function formatTerminalUnavailable(reason?: string | null): string {
+  return reason
+    ? t('terminal.unavailableWithReason', { reason })
+    : t('terminal.unavailable')
+}
+
+async function checkTerminalAvailability(): Promise<boolean> {
+  try {
+    const status = await request<TerminalStatus>('/api/hermes/terminal/status')
+    if (!status.available) {
+      connectionError.value = formatTerminalUnavailable(status.reason)
+      return false
+    }
+  } catch (err) {
+    console.warn('[Terminal] availability check failed, trying WebSocket anyway:', err)
+  }
+  return true
+}
+
+async function connect() {
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
     connectionError.value = t('terminal.connectionFailed');
     isConnecting.value = false;
     return;
   }
 
-  const url = buildWsUrl();
   connectionError.value = null;
   isConnecting.value = true;
+
+  if (!await checkTerminalAvailability()) {
+    isConnecting.value = false;
+    return;
+  }
+
+  const url = buildWsUrl();
   reconnectAttempts++;
 
   ws = new WebSocket(url);

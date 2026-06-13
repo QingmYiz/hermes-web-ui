@@ -1083,6 +1083,19 @@ export default {
     visibilitySaveFailed: '保存可见模型失败',
     showAllModels: '显示全部模型',
     clearVisibleModels: '取消全选',
+    imageRoutingTitle: '生图路由',
+    imageRoutingSubtitle: '当用户直接要求生成图片时，临时切换到指定的生图模型执行。',
+    imageRoutingRefresh: '刷新',
+    imageRoutingHint: '这是全局管理配置。开启后，普通聊天仍使用用户当前选择的模型，只有识别到生图请求时才会临时改走这里配置的模型。',
+    imageRoutingEnabled: '启用自动生图路由',
+    imageRoutingProvider: '生图 Provider',
+    imageRoutingModel: '生图模型',
+    imageRoutingEmpty: '当前 profile 还没有可用于生图路由的已配置模型。',
+    imageRoutingSaved: '生图路由已保存',
+    imageRoutingLoadFailed: '加载生图路由失败',
+    imageRoutingSaveFailed: '保存生图路由失败',
+    imageRoutingProviderRequired: '请选择生图 Provider',
+    imageRoutingModelRequired: '请选择生图模型',
     auxiliaryTitle: '辅助模型',
     auxiliarySubtitle: '为压缩、视觉、审批、MCP 和后台维护等辅助任务单独指定模型。',
     auxiliaryRefresh: '刷新',
@@ -1894,6 +1907,8 @@ export default {
     connectionFailed: '终端服务连接失败',
     connectionClosed: '终端连接已关闭',
     connectionError: '终端连接错误',
+    unavailable: '终端功能当前不可用，请重新安装依赖并重启服务。',
+    unavailableWithReason: '终端功能当前不可用：{reason}',
   },
 
   // 群聊
@@ -2059,6 +2074,7 @@ export default {
     contentDisplay: '内容展示',
     download: '下载',
     downloadFile: '下载文件',
+    generatedFile: 'AI 生成的文件',
   },
 
   // 更新日志

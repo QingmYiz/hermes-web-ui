@@ -1,5 +1,6 @@
 import { WebSocketServer } from 'ws'
 import type { Server as HttpServer } from 'http'
+import Router from '@koa/router'
 import { accessSync, chmodSync, constants as fsConstants, existsSync } from 'fs'
 import { dirname, join, isAbsolute, resolve as resolvePath } from 'path'
 import { homedir } from 'os'
@@ -11,6 +12,7 @@ import { config } from '../../config'
 import { shouldRejectUpgradeOrigin, writeForbiddenOrigin } from '../../security'
 
 let pty: any = null
+export const terminalRoutes = new Router()
 
 function ensureNodePtySpawnHelperExecutable() {
   if (process.platform !== 'darwin') return
@@ -44,6 +46,21 @@ try {
 } catch (err: any) {
   logger.warn(err, 'node-pty failed to load, terminal feature disabled')
 }
+
+function terminalUnavailableReason(): string | null {
+  return pty ? null : 'node-pty is not available in this runtime. Run npm install and npm rebuild node-pty for the current Node.js version.'
+}
+
+terminalRoutes.get('/api/hermes/terminal/status', (ctx) => {
+  const reason = terminalUnavailableReason()
+  ctx.body = {
+    available: !reason,
+    reason,
+    platform: process.platform,
+    arch: process.arch,
+    shell: reason ? null : shellName(findShell()),
+  }
+})
 
 // ─── Shell detection ────────────────────────────────────────────
 
@@ -136,14 +153,31 @@ function createSession(shell: string): PtySession {
 // ─── WebSocket server setup ─────────────────────────────────────
 
 export function setupTerminalWebSocket(httpServers: HttpServer | HttpServer[]) {
+  const servers = Array.isArray(httpServers) ? httpServers : [httpServers]
+
   if (!pty) {
-    logger.warn('node-pty not available, skipping terminal WebSocket setup')
+    logger.warn('node-pty not available, terminal WebSocket will reject upgrades')
+    servers.forEach((httpServer) => {
+      httpServer.on('upgrade', async (req, socket) => {
+        const url = new URL(req.url || '', `http://${req.headers.host}`)
+        if (url.pathname !== '/api/hermes/terminal') {
+          return
+        }
+        socket.write([
+          'HTTP/1.1 503 Service Unavailable',
+          'Connection: close',
+          'Content-Type: application/json; charset=utf-8',
+          '',
+          JSON.stringify({ error: terminalUnavailableReason() }),
+        ].join('\r\n'))
+        socket.destroy()
+      })
+    })
     return
   }
 
   const wss = new WebSocketServer({ noServer: true })
   const defaultShell = findShell()
-  const servers = Array.isArray(httpServers) ? httpServers : [httpServers]
 
   servers.forEach((httpServer) => {
     httpServer.on('upgrade', async (req, socket, head) => {

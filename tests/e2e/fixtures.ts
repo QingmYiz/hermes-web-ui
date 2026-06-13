@@ -180,6 +180,11 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
+    if (pathname === '/api/hermes/terminal/status') {
+      await route.fulfill(jsonResponse({ available: true, reason: null, platform: 'test', arch: 'x64', shell: 'zsh' }))
+      return
+    }
+
     if (pathname === '/api/hermes/auth/copilot/check-token') {
       await route.fulfill(jsonResponse({ has_token: false, source: null, enabled: false }))
       return

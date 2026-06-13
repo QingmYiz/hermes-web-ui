@@ -16,6 +16,12 @@ export interface GatewayAutoStartConfig {
   exclude?: string[]
 }
 
+export interface ImageGenerationRoutingConfig {
+  enabled?: boolean
+  provider?: string
+  model?: string
+}
+
 function normalizeProfileList(values: unknown): string[] {
   if (!Array.isArray(values)) return []
   const seen = new Set<string>()
@@ -37,6 +43,18 @@ export function normalizeGatewayAutoStartConfig(value: unknown): GatewayAutoStar
   if (typeof raw.enabled === 'boolean') normalized.enabled = raw.enabled
   if (Array.isArray(raw.include)) normalized.include = normalizeProfileList(raw.include)
   if (Array.isArray(raw.exclude)) normalized.exclude = normalizeProfileList(raw.exclude)
+
+  return normalized
+}
+
+export function normalizeImageGenerationRoutingConfig(value: unknown): ImageGenerationRoutingConfig {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const raw = value as Record<string, unknown>
+  const normalized: ImageGenerationRoutingConfig = {}
+
+  if (typeof raw.enabled === 'boolean') normalized.enabled = raw.enabled
+  if (typeof raw.provider === 'string' && raw.provider.trim()) normalized.provider = raw.provider.trim()
+  if (typeof raw.model === 'string' && raw.model.trim()) normalized.model = raw.model.trim()
 
   return normalized
 }
@@ -67,6 +85,10 @@ export interface AppConfig {
   // Defaults to legacy behavior: all local profiles are eligible. This is a
   // Web UI-level setting, not the active Hermes profile's config.yaml.
   gatewayAutoStart?: GatewayAutoStartConfig
+
+  // Web UI-level routing for image-generation prompts. When enabled, the
+  // bridge can temporarily route image requests to this configured model.
+  imageGenerationRouting?: ImageGenerationRoutingConfig
 }
 
 let cache: AppConfig | null = null

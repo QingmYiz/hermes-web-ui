@@ -29,6 +29,7 @@ import { summarizeToolArguments } from './response-utils'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
 import type { ChatMessage } from '../../../lib/context-compressor'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
+import { resolveImageGenerationRunTarget } from './image-routing'
 import { filterBridgeToolCallMarkupDelta, flushPendingToolCallMarkup } from './bridge-delta'
 import { markAbortCompleted } from './abort'
 
@@ -319,6 +320,11 @@ export async function handleBridgeRun(
     requestedProvider: data.provider,
     modelGroups: data.model_groups,
   })
+  const selectedModelContext = { model: resolvedModel, provider: resolvedProvider }
+  const imageGenerationTarget = await resolveImageGenerationRunTarget(input)
+  const runModelContext = imageGenerationTarget
+    ? { model: imageGenerationTarget.model, provider: imageGenerationTarget.provider }
+    : selectedModelContext
   if (sessionRow) {
     const updates: { model?: string; provider?: string } = {}
     if (resolvedModel && sessionRow.model !== resolvedModel) updates.model = resolvedModel
@@ -329,6 +335,9 @@ export async function handleBridgeRun(
     `[Current Hermes profile: ${profile}]`,
     workspace ? `[Current working directory: ${workspace}]` : '',
     'When calling Hermes Web UI endpoints from tools or skills, include the current Hermes profile as the X-Hermes-Profile header if the endpoint supports profile-scoped behavior.',
+    imageGenerationTarget
+      ? `[Image generation routing is enabled for this run. Use provider "${runModelContext.provider}" and model "${runModelContext.model}" to fulfill the user's image-generation request.]`
+      : '',
   ].filter(Boolean).join('\n')
   fullInstructions = `\n${runContext}\n${fullInstructions}`
 
@@ -424,13 +433,13 @@ export async function handleBridgeRun(
     undefined,
     emit,
     sessionMap,
-    { model: resolvedModel, provider: resolvedProvider },
+    runModelContext,
     async (_messages, localMessageTokens) => {
       const fixedContextTokens = await ensureBridgeFixedContext({
         sessionId: session_id,
         profile,
-        model: resolvedModel,
-        provider: resolvedProvider,
+        model: runModelContext.model,
+        provider: runModelContext.provider,
         instructions: fullInstructions,
         state,
         bridge,
@@ -442,8 +451,8 @@ export async function handleBridgeRun(
       bridgeLogger.info({
         sessionId: session_id,
         profile,
-        model: resolvedModel,
-        provider: resolvedProvider,
+        model: runModelContext.model,
+        provider: runModelContext.provider,
         fixedContextTokens,
         messageTokens: localMessageTokens,
         contextTokens,
@@ -471,6 +480,9 @@ export async function handleBridgeRun(
       historyMessages: history.length,
       hasInstructions: Boolean(fullInstructions),
       multimodalInput: isContentBlockArray(input),
+      imageGenerationRouted: Boolean(imageGenerationTarget),
+      model: runModelContext.model,
+      provider: runModelContext.provider,
     }, '[chat-run-socket] starting CLI bridge run')
     const started = await bridge.chat(
       session_id,
@@ -480,8 +492,8 @@ export async function handleBridgeRun(
       profile,
       {
         ...(bridgeStorageInput !== undefined ? { storage_message: bridgeStorageInput } : {}),
-        ...(resolvedModel ? { model: resolvedModel } : {}),
-        ...(resolvedProvider ? { provider: resolvedProvider } : {}),
+        ...(runModelContext.model ? { model: runModelContext.model } : {}),
+        ...(runModelContext.provider ? { provider: runModelContext.provider } : {}),
         // Local patch (reasoning-effort): per-session reasoning effort override.
         ...(data.reasoning_effort ? { reasoning_effort: data.reasoning_effort } : {}),
       },
@@ -517,7 +529,8 @@ export async function handleBridgeRun(
         bridge,
         dequeueNextQueuedRun,
         fullInstructions,
-        { model: resolvedModel, provider: resolvedProvider },
+        runModelContext,
+        selectedModelContext,
         currentInputTokens,
         shouldPersistUserMessage && displayRole === 'user',
         data.model_groups,
@@ -545,8 +558,8 @@ export async function handleBridgeRun(
     const errContextTokens = await refreshFinalContextUsage({
       sessionId: session_id,
       profile,
-      model: resolvedModel,
-      provider: resolvedProvider,
+      model: runModelContext.model,
+      provider: runModelContext.provider,
       instructions: fullInstructions,
       state,
       usage: errUsage,
@@ -556,7 +569,7 @@ export async function handleBridgeRun(
     const billing = updateUsage(session_id, {
       inputTokens: errUsage.inputTokens,
       outputTokens: errUsage.outputTokens,
-      model: resolvedModel || '',
+      model: runModelContext.model || '',
       profile,
     })
     emit('run.failed', {
@@ -659,6 +672,7 @@ export async function resumeBridgeRun(
         dequeueNextQueuedRun,
         instructions,
         { model: args.model, provider: args.provider },
+        { model: args.model, provider: args.provider },
       )
     }
     cursor = deltas.length
@@ -690,6 +704,7 @@ export async function resumeBridgeRun(
           bridge,
           dequeueNextQueuedRun,
           instructions,
+          { model: args.model, provider: args.provider },
           { model: args.model, provider: args.provider },
         )
       }
@@ -810,6 +825,7 @@ async function applyBridgeChunkAsync(
   dequeueNextQueuedRun: (socket: Socket, sessionId: string, fallbackProfile?: string) => void,
   instructions: string,
   modelContext: { model?: string | null; provider?: string | null },
+  continuationModelContext: { model?: string | null; provider?: string | null },
   currentInputTokens = 0,
   currentInputIncludedInDb = true,
   modelGroups?: RunModelGroup[],
@@ -1223,7 +1239,7 @@ async function applyBridgeChunkAsync(
       state,
       bridge,
       profile,
-      modelContext,
+      modelContext: continuationModelContext,
       modelGroups,
       instructions,
       finalResponse: bridgeFinalResponse(chunk, state),

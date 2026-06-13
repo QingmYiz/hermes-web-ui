@@ -11,7 +11,7 @@
 import type { Server, Socket } from 'socket.io'
 import { logger } from '../../logger'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
-import { getSession } from '../../../db/hermes/session-store'
+import { addMessage, createSession, getSession, updateSessionStats } from '../../../db/hermes/session-store'
 import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../hermes-profile'
 import { AgentBridgeClient } from '../agent-bridge'
 import { getAgentBridgeManager } from '../agent-bridge/manager'
@@ -23,6 +23,7 @@ import { handleAbort } from './abort'
 import { getOrCreateSession } from './compression'
 import { handleSessionCommand, isSessionCommand, parseSessionCommand } from './session-command'
 import { contentBlocksToString } from './content-blocks'
+import { generateImageForChat, resolveImageGenerationRunTarget, type ImageGenerationRunTarget } from './image-routing'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
 import { userCanAccessProfile } from '../../../db/hermes/users-store'
@@ -384,6 +385,12 @@ export class ChatRunSocket {
     const source = resolveRunSource(data.source, data.session_id)
     if (data.session_id && source === 'cli' && isSessionCommand(data.input)) return
 
+    const imageGenerationTarget = await resolveImageGenerationRunTarget(data.input)
+    if (imageGenerationTarget) {
+      await this.handleImageGenerationRun(socket, data, profile, imageGenerationTarget, skipUserMessage)
+      return
+    }
+
     if (source === 'cli') {
       const bridgeReady = await ensureBridgeReadyForChatRun()
       if (!bridgeReady.ok) {
@@ -463,6 +470,159 @@ export class ChatRunSocket {
       skipUserMessage,
       this.dequeueNextQueuedRun.bind(this),
     )
+  }
+
+  private async handleImageGenerationRun(
+    socket: Socket,
+    data: {
+      input: string | ContentBlock[]
+      display_input?: string | ContentBlock[] | null
+      display_role?: 'user' | 'command'
+      storage_message?: string
+      session_id?: string
+      model?: string
+      provider?: string
+      workspace?: string | null
+      queue_id?: string
+      peerExcludeSocketId?: string
+    },
+    profile: string,
+    target: ImageGenerationRunTarget,
+    skipUserMessage = false,
+  ) {
+    const sessionId = data.session_id
+    const runId = `image_run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+    const now = Math.floor(Date.now() / 1000)
+    const emit = (event: string, payload: any) => {
+      const tagged = sessionId ? { ...payload, session_id: sessionId } : payload
+      if (sessionId) {
+        this.nsp.to(`session:${sessionId}`).emit(event, tagged)
+      } else if (socket.connected) {
+        socket.emit(event, tagged)
+      }
+    }
+
+    let state: SessionState | undefined
+    if (sessionId) {
+      state = getOrCreateSession(this.sessionMap, sessionId)
+      state.isWorking = true
+      state.events = []
+      state.profile = profile
+      state.source = 'api_server'
+      state.runId = runId
+      socket.join(`session:${sessionId}`)
+
+      const inputText = typeof data.storage_message === 'string'
+        ? data.storage_message
+        : contentBlocksToString(data.display_input === null ? data.input : data.display_input || data.input)
+      if (!skipUserMessage) {
+        state.messages.push({
+          id: state.messages.length + 1,
+          session_id: sessionId,
+          runMarker: runId,
+          role: data.display_role || 'user',
+          content: inputText,
+          timestamp: now,
+        })
+        if (!getSession(sessionId)) {
+          const preview = inputText.replace(/[\r\n]/g, ' ').substring(0, 100)
+          createSession({
+            id: sessionId,
+            profile,
+            source: 'api_server',
+            model: target.model,
+            provider: target.provider,
+            title: preview,
+            workspace: data.workspace || undefined,
+          })
+        }
+        const messageId = addMessage({
+          session_id: sessionId,
+          role: data.display_role || 'user',
+          content: inputText,
+          timestamp: now,
+        })
+        const peerUserMessage = { id: data.queue_id ? undefined : messageId, role: data.display_role || 'user', content: inputText, timestamp: now }
+        const peerTarget = data.peerExcludeSocketId
+          ? this.nsp.to(`session:${sessionId}`).except(data.peerExcludeSocketId)
+          : socket.to(`session:${sessionId}`)
+        peerTarget.emit('run.peer_user_message', {
+          event: 'run.peer_user_message',
+          session_id: sessionId,
+          message: {
+            ...peerUserMessage,
+            id: data.queue_id || peerUserMessage.id,
+          },
+        })
+      }
+    }
+
+    emit('run.started', {
+      event: 'run.started',
+      run_id: runId,
+      queue_length: state?.queue.length || 0,
+    })
+
+    try {
+      const generated = await generateImageForChat(profile, data.input, target)
+      const output = generated.images
+        .map((image, index) => `![生成图片 ${index + 1}](<${image.path.replace(/\\/g, '/')}>)`)
+        .join('\n\n')
+      const completedAt = Math.floor(Date.now() / 1000)
+
+      if (sessionId && state) {
+        state.messages.push({
+          id: state.messages.length + 1,
+          session_id: sessionId,
+          runMarker: runId,
+          role: 'assistant',
+          content: output,
+          timestamp: completedAt,
+        })
+        addMessage({
+          session_id: sessionId,
+          role: 'assistant',
+          content: output,
+          timestamp: completedAt,
+        })
+        updateSessionStats(sessionId)
+        state.isWorking = false
+        state.runId = undefined
+        state.profile = undefined
+        state.activeRunMarker = undefined
+      }
+
+      const queueRemaining = state?.queue?.length || 0
+      emit('run.completed', {
+        event: 'run.completed',
+        run_id: runId,
+        output,
+        model: generated.model,
+        provider: generated.provider,
+        usage: { input_tokens: 0, output_tokens: 0 },
+        queue_remaining: queueRemaining,
+      })
+      if (sessionId && queueRemaining > 0) {
+        this.dequeueNextQueuedRun(socket, sessionId, profile)
+      }
+    } catch (err: any) {
+      const queueRemaining = state?.queue?.length || 0
+      if (sessionId && state) {
+        state.isWorking = false
+        state.runId = undefined
+        state.profile = undefined
+        state.activeRunMarker = undefined
+      }
+      emit('run.failed', {
+        event: 'run.failed',
+        run_id: runId,
+        error: err?.message || String(err),
+        queue_remaining: queueRemaining,
+      })
+      if (sessionId && queueRemaining > 0) {
+        this.dequeueNextQueuedRun(socket, sessionId, profile)
+      }
+    }
   }
 
   // --- Resume ---

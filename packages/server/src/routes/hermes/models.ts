@@ -1,5 +1,6 @@
 import Router from '@koa/router'
 import * as ctrl from '../../controllers/hermes/models'
+import { requireSuperAdmin } from '../../middleware/user-auth'
 
 export const modelRoutes = new Router()
 
@@ -12,6 +13,8 @@ modelRoutes.put('/api/hermes/model-alias', ctrl.setModelAlias)
 modelRoutes.put('/api/hermes/model-visibility', ctrl.setModelVisibility)
 modelRoutes.put('/api/hermes/custom-model', ctrl.addCustomModel)
 modelRoutes.delete('/api/hermes/custom-model', ctrl.removeCustomModel)
+modelRoutes.get('/api/hermes/image-generation-routing', requireSuperAdmin, ctrl.getImageGenerationRouting)
+modelRoutes.put('/api/hermes/image-generation-routing', requireSuperAdmin, ctrl.setImageGenerationRouting)
 
 // Model context routes
 modelRoutes.get('/api/hermes/model-context', ctrl.getModelContext)

@@ -300,6 +300,48 @@ describe('MarkdownRenderer', () => {
     expect(img.attributes('alt')).toBe('桌面截图')
   })
 
+  it('renders bare local image paths as image previews', () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '图片已生成：C:\\Users\\Administrator\\Pictures\\result.png',
+      },
+    })
+
+    const img = wrapper.find('img')
+    expect(img.exists()).toBe(true)
+    expect(img.attributes('src')).toContain('/api/hermes/download?path=')
+    const src = new URL(img.attributes('src'))
+    expect(decodeURIComponent(src.searchParams.get('path') || '')).toBe('C:/Users/Administrator/Pictures/result.png')
+    expect(img.attributes('alt')).toBe('result.png')
+    expect(wrapper.find('.markdown-file-card').exists()).toBe(false)
+  })
+
+  it('renders bare generated document paths as file cards', () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '文件已生成：C:\\Users\\Administrator\\Documents\\report.docx',
+      },
+    })
+
+    const card = wrapper.find('.markdown-file-card')
+    expect(card.exists()).toBe(true)
+    expect(card.attributes('data-path')).toBe('C:/Users/Administrator/Documents/report.docx')
+    expect(card.attributes('data-filename')).toBe('report.docx')
+    expect(card.text()).toContain('report.docx')
+    expect(card.text()).toContain('download.generatedFile')
+  })
+
+  it('does not render bare local paths inside code fences as file cards', () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '```text\nC:\\Users\\Administrator\\Documents\\report.docx\n```',
+      },
+    })
+
+    expect(wrapper.find('.markdown-file-card').exists()).toBe(false)
+    expect(wrapper.find('code.hljs').text()).toContain('C:\\Users\\Administrator\\Documents\\report.docx')
+  })
+
   it('downloads local text files when the file card download icon is clicked', async () => {
     const wrapper = mount(MarkdownRenderer, {
       props: {

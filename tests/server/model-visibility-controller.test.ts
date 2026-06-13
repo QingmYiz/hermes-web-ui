@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockReadFile, mockReadConfigYaml, mockReadConfigYamlForProfile, mockFetchProviderModels, mockBuildModelGroups, mockReadAppConfig, mockWriteAppConfig, mockExistsSync, mockReadFileSync, mockListProfileNamesFromDisk, mockListUserProfiles, mockReadProviderModelCatalogCache, mockGetCachedProviderModels, mockRefreshConfiguredProviderModelCatalogs, mockWriteProviderModelCatalogEntry, mockGetCopilotModelsDetailed } = vi.hoisted(() => ({
+const { mockReadFile, mockReadConfigYaml, mockReadConfigYamlForProfile, mockFetchProviderModels, mockBuildModelGroups, mockReadAppConfig, mockWriteAppConfig, mockNormalizeImageGenerationRoutingConfig, mockExistsSync, mockReadFileSync, mockListProfileNamesFromDisk, mockListUserProfiles, mockReadProviderModelCatalogCache, mockGetCachedProviderModels, mockRefreshConfiguredProviderModelCatalogs, mockWriteProviderModelCatalogEntry, mockGetCopilotModelsDetailed } = vi.hoisted(() => ({
   mockReadFile: vi.fn(),
   mockReadConfigYaml: vi.fn(),
   mockReadConfigYamlForProfile: vi.fn(),
@@ -8,6 +8,14 @@ const { mockReadFile, mockReadConfigYaml, mockReadConfigYamlForProfile, mockFetc
   mockBuildModelGroups: vi.fn(() => ({ default: '', groups: [] })),
   mockReadAppConfig: vi.fn(),
   mockWriteAppConfig: vi.fn(),
+  mockNormalizeImageGenerationRoutingConfig: vi.fn((value: any) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+    const normalized: Record<string, unknown> = {}
+    if (typeof value.enabled === 'boolean') normalized.enabled = value.enabled
+    if (typeof value.provider === 'string' && value.provider.trim()) normalized.provider = value.provider.trim()
+    if (typeof value.model === 'string' && value.model.trim()) normalized.model = value.model.trim()
+    return normalized
+  }),
   mockExistsSync: vi.fn(() => false),
   mockReadFileSync: vi.fn(),
   mockListProfileNamesFromDisk: vi.fn(() => ['default']),
@@ -116,6 +124,7 @@ vi.mock('../../packages/server/src/services/hermes/copilot-models', () => ({
 vi.mock('../../packages/server/src/services/app-config', () => ({
   readAppConfig: mockReadAppConfig,
   writeAppConfig: mockWriteAppConfig,
+  normalizeImageGenerationRoutingConfig: mockNormalizeImageGenerationRoutingConfig,
 }))
 
 vi.mock('../../packages/server/src/services/hermes/model-catalog-cache', () => ({
@@ -610,6 +619,70 @@ describe('models controller — model visibility', () => {
     expect(ctx.status).toBe(200)
     expect(mockWriteAppConfig).toHaveBeenCalledWith({ customModels: {} })
     expect(ctx.body).toEqual({ success: true, custom_models: {} })
+  })
+
+  it('returns image-generation routing config with admin-selectable model groups', async () => {
+    mockReadAppConfig.mockResolvedValue({
+      imageGenerationRouting: {
+        enabled: true,
+        provider: 'deepseek',
+        model: 'deepseek-reasoner',
+      },
+      modelVisibility: {
+        deepseek: { mode: 'include', models: ['deepseek-chat'] },
+      },
+    })
+
+    const ctx = makeCtx()
+    await ctrl.getImageGenerationRouting(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(ctx.body.config).toEqual({
+      enabled: true,
+      provider: 'deepseek',
+      model: 'deepseek-reasoner',
+    })
+    expect(ctx.body.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: 'deepseek',
+        models: ['deepseek-chat', 'deepseek-reasoner'],
+      }),
+    ]))
+  })
+
+  it('saves image-generation routing in app config', async () => {
+    mockReadAppConfig.mockResolvedValue({})
+    mockWriteAppConfig.mockResolvedValue({
+      imageGenerationRouting: {
+        enabled: true,
+        provider: 'deepseek',
+        model: 'deepseek-reasoner',
+      },
+    })
+
+    const ctx = makeCtx({
+      enabled: true,
+      provider: 'deepseek',
+      model: 'deepseek-reasoner',
+    })
+    await ctrl.setImageGenerationRouting(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(mockWriteAppConfig).toHaveBeenCalledWith({
+      imageGenerationRouting: {
+        enabled: true,
+        provider: 'deepseek',
+        model: 'deepseek-reasoner',
+      },
+    })
+    expect(ctx.body).toEqual(expect.objectContaining({
+      success: true,
+      config: {
+        enabled: true,
+        provider: 'deepseek',
+        model: 'deepseek-reasoner',
+      },
+    }))
   })
 
   it('rejects empty include lists', async () => {

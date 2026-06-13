@@ -5,7 +5,13 @@ import { getActiveEnvPath, getActiveAuthPath, getActiveProfileName, getProfileDi
 import { readConfigYaml, readConfigYamlForProfile, updateConfigYaml, updateConfigYamlForProfile, fetchProviderModels, buildModelGroups, PROVIDER_ENV_MAP } from '../../services/config-helpers'
 import { buildProviderModelMap, PROVIDER_PRESETS } from '../../shared/providers'
 import { getCopilotModelsDetailed, resolveCopilotOAuthToken, type CopilotModelMeta } from '../../services/hermes/copilot-models'
-import { readAppConfig, writeAppConfig, type ModelVisibilityRule } from '../../services/app-config'
+import {
+  readAppConfig,
+  writeAppConfig,
+  normalizeImageGenerationRoutingConfig,
+  type ImageGenerationRoutingConfig,
+  type ModelVisibilityRule,
+} from '../../services/app-config'
 import { getDb } from '../../db'
 import { MODEL_CONTEXT_TABLE } from '../../db/hermes/schemas'
 import { listUserProfiles } from '../../db/hermes/users-store'
@@ -152,6 +158,49 @@ function applyModelVisibility(groups: AvailableGroup[], visibility: ModelVisibil
       }
     })
     .filter(group => group.models.length > 0)
+}
+
+function groupsForAdminModelSelection(groups: AvailableGroup[]): AvailableGroup[] {
+  return groups.map(group => {
+    const availableModels = Array.from(new Set(group.available_models || group.models))
+    return {
+      ...group,
+      models: availableModels,
+      available_models: availableModels,
+    }
+  })
+}
+
+function ensureGroupIncludesModel(groups: AvailableGroup[], provider: string, model: string): AvailableGroup[] {
+  if (!provider || !model) return groups
+  const existing = groups.find(group => group.provider === provider)
+  if (existing) {
+    if (existing.models.includes(model)) return groups
+    return groups.map(group => group.provider === provider
+      ? {
+          ...group,
+          models: [...group.models, model],
+          available_models: [...new Set([...(group.available_models || group.models), model])],
+        }
+      : group)
+  }
+
+  return [
+    ...groups,
+    {
+      provider,
+      label: provider,
+      base_url: '',
+      models: [model],
+      available_models: [model],
+      api_key: '',
+    },
+  ]
+}
+
+function hasModelInAvailableGroups(groups: AvailableGroup[], provider: string, model: string): boolean {
+  if (!provider || !model) return false
+  return groups.some(group => group.provider === provider && group.models.includes(model))
 }
 
 function profileModelVisibility(config: Record<string, any>): ModelVisibility {
@@ -872,6 +921,75 @@ export async function refreshProviderModelCatalogCache(ctx: any) {
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err?.message || 'Failed to refresh provider model cache' }
+  }
+}
+
+export async function getImageGenerationRouting(ctx: any) {
+  try {
+    const appConfig = await readAppConfig()
+    const normalizedConfig = normalizeImageGenerationRoutingConfig(appConfig.imageGenerationRouting)
+    const modelCatalogCache = await readProviderModelCatalogCache()
+    const available = await buildAvailableForProfile(requestScopedProfileName(ctx), modelCatalogCache, appConfig)
+    const groups = ensureGroupIncludesModel(
+      groupsForAdminModelSelection(available.groups),
+      String(normalizedConfig.provider || '').trim(),
+      String(normalizedConfig.model || '').trim(),
+    )
+    ctx.body = {
+      config: {
+        enabled: normalizedConfig.enabled === true,
+        provider: String(normalizedConfig.provider || '').trim(),
+        model: String(normalizedConfig.model || '').trim(),
+      },
+      groups,
+    }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err?.message || 'Failed to load image generation routing' }
+  }
+}
+
+export async function setImageGenerationRouting(ctx: any) {
+  const body = (ctx.request.body || {}) as ImageGenerationRoutingConfig
+  const enabled = body.enabled === true
+  const provider = String(body.provider || '').trim()
+  const model = String(body.model || '').trim()
+
+  if (enabled && (!provider || !model)) {
+    ctx.status = 400
+    ctx.body = { error: 'Provider and model are required when image generation routing is enabled' }
+    return
+  }
+
+  try {
+    const appConfig = await readAppConfig()
+    const modelCatalogCache = await readProviderModelCatalogCache()
+    const available = await buildAvailableForProfile(requestScopedProfileName(ctx), modelCatalogCache, appConfig)
+    const groups = groupsForAdminModelSelection(available.groups)
+
+    if (enabled && !hasModelInAvailableGroups(groups, provider, model)) {
+      ctx.status = 400
+      ctx.body = { error: `Configured image generation target "${provider}/${model}" is not available` }
+      return
+    }
+
+    const nextConfig: ImageGenerationRoutingConfig = enabled
+      ? { enabled: true, provider, model }
+      : {}
+    const saved = await writeAppConfig({ imageGenerationRouting: nextConfig })
+    const normalizedConfig = normalizeImageGenerationRoutingConfig(saved.imageGenerationRouting)
+    ctx.body = {
+      success: true,
+      config: {
+        enabled: normalizedConfig.enabled === true,
+        provider: String(normalizedConfig.provider || '').trim(),
+        model: String(normalizedConfig.model || '').trim(),
+      },
+      groups: ensureGroupIncludesModel(groups, provider, model),
+    }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err?.message || 'Failed to save image generation routing' }
   }
 }
 

@@ -121,6 +121,18 @@ export interface AvailableModelsResponse {
   custom_models?: CustomModels
 }
 
+export interface ImageGenerationRoutingConfig {
+  enabled: boolean
+  provider: string
+  model: string
+}
+
+export interface ImageGenerationRoutingResponse {
+  config: ImageGenerationRoutingConfig
+  groups: AvailableModelGroup[]
+  success?: boolean
+}
+
 export interface CustomProvider {
   name: string
   base_url: string
@@ -298,5 +310,16 @@ export async function removeCustomModel(data: {
   params.set('model', data.model)
   return request<{ success: boolean; custom_models: CustomModels }>(`/api/hermes/custom-model?${params.toString()}`, {
     method: 'DELETE',
+  })
+}
+
+export async function fetchImageGenerationRouting(): Promise<ImageGenerationRoutingResponse> {
+  return request<ImageGenerationRoutingResponse>('/api/hermes/image-generation-routing')
+}
+
+export async function updateImageGenerationRouting(data: ImageGenerationRoutingConfig): Promise<ImageGenerationRoutingResponse> {
+  return request<ImageGenerationRoutingResponse>('/api/hermes/image-generation-routing', {
+    method: 'PUT',
+    body: JSON.stringify(data),
   })
 }

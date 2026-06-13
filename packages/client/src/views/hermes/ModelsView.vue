@@ -3,17 +3,20 @@ import { ref, onMounted } from 'vue'
 import { NButton, NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import AuxiliaryModelsPanel from '@/components/hermes/models/AuxiliaryModelsPanel.vue'
+import ImageGenerationRoutingPanel from '@/components/hermes/models/ImageGenerationRoutingPanel.vue'
 import ProvidersPanel from '@/components/hermes/models/ProvidersPanel.vue'
 import ProviderFormModal from '@/components/hermes/models/ProviderFormModal.vue'
 import { useModelsStore } from '@/stores/hermes/models'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { checkCopilotToken } from '@/api/hermes/copilot-auth'
+import { isStoredSuperAdmin } from '@/api/client'
 
 const { t } = useI18n()
 const modelsStore = useModelsStore()
 const profilesStore = useProfilesStore()
 const message = useMessage()
 const showModal = ref(false)
+const canManageImageRouting = isStoredSuperAdmin()
 
 async function loadProvidersForProfile() {
   if (!profilesStore.activeProfileName || profilesStore.profiles.length === 0) {
@@ -82,6 +85,7 @@ async function handleRefreshModelCache() {
     </header>
 
     <div class="models-content">
+      <ImageGenerationRoutingPanel v-if="canManageImageRouting" />
       <AuxiliaryModelsPanel />
       <NSpin :show="modelsStore.loading && modelsStore.providers.length === 0">
         <ProvidersPanel />
