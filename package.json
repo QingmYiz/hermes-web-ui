@@ -57,6 +57,7 @@
     "build:desktop:mac": "npm run build && npm run desktop:install && npm --prefix packages/desktop run dist -- --mac --publish never",
     "build:desktop:win": "npm run build && npm run desktop:install && npm --prefix packages/desktop run dist -- --win --publish never",
     "build:desktop:linux": "npm run build && npm run desktop:install && npm --prefix packages/desktop run dist -- --linux --publish never",
+    "android:build": "node scripts/build-android.mjs",
     "openapi:generate": "node scripts/generate-openapi.mjs",
     "claude": "claude --dangerously-skip-permissions"
   },
