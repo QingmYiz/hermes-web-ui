@@ -14,6 +14,7 @@ import { usePersistentRecord } from '@/composables/usePersistentRecord'
 import RouteLinkItem from '@/components/common/RouteLinkItem.vue'
 import { changelog } from "@/data/changelog";
 import { isStoredSuperAdmin, getStoredUsername, getStoredUserRole } from "@/api/client";
+import { fetchMyBilling } from "@/api/hermes/billing";
 
 const { t } = useI18n();
 const message = useMessage();
@@ -85,6 +86,26 @@ function handleLogout() {
 const showChangelog = ref(false);
 const showVersionManagement = ref(false);
 const showAccountModal = ref(false);
+const accountCredits = ref<number | null>(null);
+const accountCreditsLoading = ref(false);
+
+function formatCredits(value: number | null) {
+  if (value == null) return "--";
+  return Number.isInteger(value) ? String(value) : value.toFixed(2);
+}
+
+async function loadAccountBilling() {
+  if (accountCreditsLoading.value) return;
+  accountCreditsLoading.value = true;
+  try {
+    const billing = await fetchMyBilling(30);
+    accountCredits.value = billing.account.balance;
+  } catch {
+    accountCredits.value = null;
+  } finally {
+    accountCreditsLoading.value = false;
+  }
+}
 
 function openChangelog() {
   showChangelog.value = true;
@@ -96,6 +117,7 @@ function openVersionManagement() {
 
 function openAccountModal() {
   showAccountModal.value = true;
+  void loadAccountBilling();
 }
 
 function openAccountSettings() {
@@ -334,8 +356,10 @@ function openAccountSettings() {
       </div>
     </nav>
 
-    <ProfileSelector />
-    <ModelSelector />
+    <div class="sidebar-context-panel">
+      <ProfileSelector />
+      <ModelSelector />
+    </div>
 
     <div class="sidebar-footer">
       <div class="account-row">
@@ -346,13 +370,16 @@ function openAccountSettings() {
             <span class="account-sub">{{ currentProfileName }}</span>
           </span>
         </button>
-        <button class="account-logout" :title="t('sidebar.logout')" @click="handleLogout">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-            <polyline points="16 17 21 12 16 7" />
-            <line x1="21" y1="12" x2="9" y2="12" />
-          </svg>
-        </button>
+        <span class="account-actions">
+          <ThemeSwitch />
+          <button class="account-logout" :title="t('sidebar.logout')" @click="handleLogout">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+          </button>
+        </span>
       </div>
       <div class="compact-meta">
         <span
@@ -367,7 +394,6 @@ function openAccountSettings() {
           }}</span>
         </span>
         <button class="version-text" @click="openChangelog">v{{ appStore.serverVersion || "0.1.0" }}</button>
-        <ThemeSwitch />
       </div>
       <NButton v-if="isDesktopShell" type="primary" size="tiny" block class="update-btn" @click="openVersionManagement">
         {{ t('sidebar.versionManagement') }}
@@ -394,28 +420,32 @@ function openAccountSettings() {
         </div>
       </div>
     </NModal>
-    <NModal v-model:show="showAccountModal" preset="dialog" title="个人信息">
+    <NModal v-model:show="showAccountModal" preset="dialog" :title="t('sidebar.accountInfo')">
       <div class="account-modal-content">
         <div class="account-modal-avatar">{{ (currentUsername || 'U').slice(0, 1).toUpperCase() }}</div>
         <div class="account-info-row">
-          <span>用户名</span>
+          <span>{{ t('sidebar.accountUsername') }}</span>
           <strong>{{ currentUsername || '-' }}</strong>
         </div>
         <div class="account-info-row">
-          <span>角色</span>
-          <strong>{{ currentRole === 'super_admin' ? '超级管理员' : '普通用户' }}</strong>
+          <span>{{ t('sidebar.accountRole') }}</span>
+          <strong>{{ currentRole === 'super_admin' ? t('sidebar.accountRoleSuperAdmin') : t('sidebar.accountRoleAdmin') }}</strong>
         </div>
         <div class="account-info-row">
-          <span>当前 profile</span>
+          <span>{{ t('sidebar.accountProfile') }}</span>
           <strong>{{ currentProfileName }}</strong>
         </div>
         <div class="account-info-row">
-          <span>连接状态</span>
+          <span>{{ t('sidebar.accountCredits') }}</span>
+          <strong>{{ accountCreditsLoading ? t('common.loading') : formatCredits(accountCredits) }}</strong>
+        </div>
+        <div class="account-info-row">
+          <span>{{ t('sidebar.accountConnection') }}</span>
           <strong>{{ appStore.connected ? t("sidebar.connected") : t("sidebar.disconnected") }}</strong>
         </div>
       </div>
       <template #action>
-        <NButton @click="openAccountSettings">账户设置</NButton>
+        <NButton @click="openAccountSettings">{{ t('sidebar.accountSettings') }}</NButton>
         <NButton type="error" secondary @click="handleLogout">{{ t("sidebar.logout") }}</NButton>
       </template>
     </NModal>
@@ -607,9 +637,42 @@ function openAccountSettings() {
   }
 }
 
-.sidebar-footer {
-  padding-top: 8px;
+.sidebar-context-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0 6px;
   border-top: 1px solid $border-color;
+
+  :deep(.profile-selector),
+  :deep(.model-selector) {
+    padding: 0;
+    margin: 0;
+  }
+
+  :deep(.selector-label),
+  :deep(.model-label) {
+    display: none;
+  }
+
+  :deep(.profile-display),
+  :deep(.model-trigger) {
+    height: 30px;
+    border-radius: $radius-sm;
+    background: $bg-input;
+  }
+
+  :deep(.profile-display) {
+    padding: 3px 6px;
+  }
+
+  :deep(.model-trigger) {
+    padding: 5px 7px;
+  }
+}
+
+.sidebar-footer {
+  padding-top: 6px;
 }
 
 .account-row,
@@ -621,7 +684,7 @@ function openAccountSettings() {
 }
 
 .account-row {
-  padding: 4px 0 6px;
+  padding: 2px 0 4px;
 }
 
 .account-trigger,
@@ -639,7 +702,7 @@ function openAccountSettings() {
   min-width: 0;
   flex: 1;
   gap: 8px;
-  padding: 6px 8px;
+  padding: 6px;
   border-radius: $radius-sm;
   color: $text-secondary;
   text-align: left;
@@ -648,6 +711,13 @@ function openAccountSettings() {
     background: rgba(var(--accent-primary-rgb), 0.06);
     color: $text-primary;
   }
+}
+
+.account-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
 }
 
 .account-avatar,
@@ -661,9 +731,9 @@ function openAccountSettings() {
 }
 
 .account-avatar {
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
   border-radius: 50%;
   font-size: 12px;
 }
@@ -697,9 +767,9 @@ function openAccountSettings() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  flex: 0 0 32px;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
   border-radius: $radius-sm;
   color: $text-muted;
 
@@ -710,8 +780,8 @@ function openAccountSettings() {
 }
 
 .compact-meta {
-  padding: 0 4px;
-  min-height: 28px;
+  padding: 1px 6px 0;
+  min-height: 22px;
 }
 
 .status-indicator {
@@ -747,6 +817,11 @@ function openAccountSettings() {
 
 :deep(.theme-switch-container) {
   flex-shrink: 0;
+}
+
+:deep(.theme-switch-container .theme-switch) {
+  width: 28px;
+  height: 28px;
 }
 
 .update-btn {
@@ -904,6 +979,11 @@ function openAccountSettings() {
 
   // Hide model selector in icon-rail mode, but keep the active profile avatar
   // visible as the profile manager entry point.
+  .sidebar-context-panel {
+    gap: 0;
+    padding: 6px 0;
+  }
+
   :deep(.model-selector) {
     display: none;
   }
@@ -911,9 +991,8 @@ function openAccountSettings() {
   :deep(.profile-selector) {
     display: flex;
     justify-content: center;
-    padding: 8px 0;
-    margin: 0 0 6px;
-    border-top: 1px solid $border-color;
+    padding: 0;
+    margin: 0;
   }
 
   :deep(.profile-selector .selector-label),
@@ -958,7 +1037,7 @@ function openAccountSettings() {
     }
 
     .account-main,
-    .account-logout,
+    .account-actions,
     .status-text,
     .version-text {
       display: none;
@@ -1015,9 +1094,9 @@ function openAccountSettings() {
   }
 
   .compact-meta {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
   }
 
   .sidebar {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, watch } from 'vue'
 import { NSpin } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/hermes/settings'
@@ -18,6 +18,11 @@ async function loadSettingsForProfile() {
 }
 
 onMounted(() => {
+  void loadSettingsForProfile()
+})
+
+watch(() => profilesStore.activeProfileName, (name, oldName) => {
+  if (!name || name === oldName) return
   void loadSettingsForProfile()
 })
 </script>
