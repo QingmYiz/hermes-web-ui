@@ -154,6 +154,10 @@ function applyModelVisibility(groups: AvailableGroup[], visibility: ModelVisibil
     .filter(group => group.models.length > 0)
 }
 
+function profileModelVisibility(config: Record<string, any>): ModelVisibility {
+  return normalizeModelVisibility(config.model_visibility)
+}
+
 function resolveVisibleDefault(defaultModel: string, defaultProvider: string, groups: AvailableGroup[]) {
   if (defaultModel) {
     const explicit = groups.find(group => group.provider === defaultProvider && group.models.includes(defaultModel))
@@ -387,7 +391,7 @@ async function buildAvailableForProfile(
   }
 
   const customProviders = Array.isArray(config.custom_providers)
-    ? config.custom_providers as Array<{ name: string; base_url: string; model: string; api_key?: string }>
+    ? config.custom_providers as Array<{ name: string; base_url: string; model: string; api_key?: string; models?: Record<string, unknown> }>
     : []
   const customFetches = await Promise.allSettled(
     customProviders.map(async cp => {
@@ -399,7 +403,10 @@ async function buildAvailableForProfile(
       const builtinCatalogModels = isBuiltinProviderKey(providerKey)
         ? PROVIDER_MODEL_CATALOG[builtinProviderKey] || builtinPreset?.models || []
         : []
-      let models = [...new Set([cp.model, ...builtinCatalogModels].filter(Boolean))]
+      const configuredModels = cp.models && typeof cp.models === 'object' && !Array.isArray(cp.models)
+        ? Object.keys(cp.models)
+        : []
+      let models = [...new Set([cp.model, ...configuredModels, ...builtinCatalogModels].filter(Boolean))]
       const cachedModels = getCachedProviderModels(modelCatalogCache, providerKey, baseUrl)
       if (cachedModels) models = [...new Set([...models, ...cachedModels])]
       return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '', builtin: isBuiltinProviderKey(providerKey) }
@@ -426,8 +433,9 @@ async function buildAvailableForProfile(
     g.available_models = Array.from(new Set(g.available_models || g.models))
   }
   const groupsWithCustomModels = applyCustomModels(groups, normalizeCustomModels(appConfig.customModels))
+  const profileVisibleGroups = applyModelVisibility(groupsWithCustomModels, profileModelVisibility(config))
 
-  return { profile, default: currentDefault, default_provider: currentDefaultProvider, groups: groupsWithCustomModels }
+  return { profile, default: currentDefault, default_provider: currentDefaultProvider, groups: profileVisibleGroups }
 }
 
 export async function getAvailable(ctx: any) {

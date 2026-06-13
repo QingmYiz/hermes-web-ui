@@ -138,7 +138,7 @@ async function loadKnownModels() {
   const models = new Set<string>(collectModelsFromStore())
   try {
     const res = await fetchAvailableModels()
-    for (const group of [...(res.groups || []), ...(res.allProviders || [])]) {
+    for (const group of res.groups || []) {
       for (const model of group.models || []) models.add(model)
       for (const model of group.available_models || []) models.add(model)
     }

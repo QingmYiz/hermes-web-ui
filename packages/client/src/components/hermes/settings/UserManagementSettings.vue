@@ -26,6 +26,8 @@ import {
 } from '@/api/auth'
 import {
   addCustomModel,
+  configureProfileModels,
+  fetchAvailableModels,
   fetchAvailableModelsForProfile,
   updateDefaultModel,
   type AvailableModelGroup,
@@ -62,6 +64,7 @@ const modelForm = reactive({
   profile: '',
   provider: '',
   model: '',
+  models: [] as string[],
   customModel: '',
 })
 
@@ -87,6 +90,7 @@ const modelOptions = computed(() => {
   const group = modelGroups.value.find(item => item.provider === modelForm.provider)
   return (group?.models || []).map(model => ({ label: model, value: model }))
 })
+const defaultModelOptions = computed(() => modelForm.models.map(model => ({ label: model, value: model })))
 
 function resetForm() {
   editingUser.value = null
@@ -124,12 +128,18 @@ function pickInitialProvider(groups: AvailableModelGroup[], defaultProvider?: st
   return groups[0]?.provider || ''
 }
 
-function pickInitialModel(groups: AvailableModelGroup[], provider: string, defaultModel?: string): string {
+function pickInitialModels(groups: AvailableModelGroup[], provider: string, defaultModel?: string): string[] {
   const group = groups.find(item => item.provider === provider)
-  if (!group) return ''
-  if (defaultModel && group.models.includes(defaultModel)) return defaultModel
-  if (group.models.includes(DEFAULT_MODEL)) return DEFAULT_MODEL
-  return group.models[0] || ''
+  if (!group) return []
+  if (defaultModel && group.models.includes(defaultModel)) return [defaultModel]
+  if (group.models.includes(DEFAULT_MODEL)) return [DEFAULT_MODEL]
+  return group.models[0] ? [group.models[0]] : []
+}
+
+function pickDefaultModel(models: string[], currentDefault?: string): string {
+  if (currentDefault && models.includes(currentDefault)) return currentDefault
+  if (models.includes(DEFAULT_MODEL)) return DEFAULT_MODEL
+  return models[0] || ''
 }
 
 async function loadUsers() {
@@ -215,15 +225,20 @@ async function loadProfileModels() {
     modelGroups.value = []
     modelForm.provider = ''
     modelForm.model = ''
+    modelForm.models = []
     return
   }
   modelLoading.value = true
   try {
-    const res = await fetchAvailableModelsForProfile(modelForm.profile)
-    const groups = uniqueGroups([...(res.groups || []), ...(res.allProviders || [])])
+    const [targetRes, configuredRes] = await Promise.all([
+      fetchAvailableModelsForProfile(modelForm.profile),
+      fetchAvailableModels(),
+    ])
+    const groups = uniqueGroups(configuredRes.groups || [])
     modelGroups.value = groups
-    modelForm.provider = pickInitialProvider(groups, res.default_provider)
-    modelForm.model = pickInitialModel(groups, modelForm.provider, res.default)
+    modelForm.provider = pickInitialProvider(groups, targetRes.default_provider)
+    modelForm.models = pickInitialModels(groups, modelForm.provider, targetRes.default)
+    modelForm.model = pickDefaultModel(modelForm.models, targetRes.default)
   } catch (err: any) {
     message.error(err.message || '模型列表加载失败')
   } finally {
@@ -236,6 +251,7 @@ function openModelConfig(user: ManagedUser) {
   modelForm.profile = user.default_profile || user.profiles[0] || ''
   modelForm.provider = ''
   modelForm.model = ''
+  modelForm.models = []
   modelForm.customModel = ''
   modelGroups.value = []
   showModelModal.value = true
@@ -250,13 +266,20 @@ async function handleModelProfileUpdate(profile: string) {
 
 function handleModelProviderUpdate(provider: string) {
   modelForm.provider = provider
-  modelForm.model = pickInitialModel(modelGroups.value, provider, '')
+  modelForm.models = pickInitialModels(modelGroups.value, provider, '')
+  modelForm.model = pickDefaultModel(modelForm.models)
+}
+
+function handleModelSelectionUpdate(models: string[]) {
+  modelForm.models = Array.from(new Set(models.map(model => model.trim()).filter(Boolean)))
+  modelForm.model = pickDefaultModel(modelForm.models, modelForm.model)
 }
 
 async function saveModelConfig() {
   const customModel = modelForm.customModel.trim()
-  const targetModel = customModel || modelForm.model
-  if (!modelForm.profile || !modelForm.provider || !targetModel) {
+  const selectedModels = Array.from(new Set([...modelForm.models, customModel].map(model => model.trim()).filter(Boolean)))
+  const targetModel = pickDefaultModel(selectedModels, customModel || modelForm.model)
+  if (!modelForm.profile || !modelForm.provider || selectedModels.length === 0 || !targetModel) {
     message.error('请选择 profile、模型供应商和模型')
     return
   }
@@ -266,6 +289,17 @@ async function saveModelConfig() {
       await addCustomModel({ provider: modelForm.provider, model: customModel })
       modelForm.model = customModel
     }
+    const group = modelGroups.value.find(item => item.provider === modelForm.provider)
+    await configureProfileModels({
+      profile: modelForm.profile,
+      sourceProfile: localStorage.getItem('hermes_active_profile_name') || undefined,
+      provider: modelForm.provider,
+      label: group?.label,
+      base_url: group?.base_url,
+      api_key: group?.api_key,
+      models: selectedModels,
+      default: targetModel,
+    })
     await updateDefaultModel({
       default: targetModel,
       provider: modelForm.provider,
@@ -460,9 +494,21 @@ onMounted(loadUsers)
           <NSelect
             v-model:value="modelForm.model"
             filterable
+            :options="defaultModelOptions"
+            :loading="modelLoading"
+            :disabled="modelForm.models.length === 0"
+            placeholder="选择模型"
+          />
+        </NFormItem>
+        <NFormItem label="可用模型">
+          <NSelect
+            v-model:value="modelForm.models"
+            multiple
+            filterable
             :options="modelOptions"
             :loading="modelLoading"
-            placeholder="选择模型"
+            placeholder="选择这个用户可用的模型"
+            @update:value="handleModelSelectionUpdate"
           />
         </NFormItem>
         <NFormItem label="手动添加模型">

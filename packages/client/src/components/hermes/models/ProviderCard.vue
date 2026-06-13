@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { NButton, NCheckbox, NCheckboxGroup, NModal, NInput, useMessage, useDialog } from 'naive-ui'
-import type { AvailableModelGroup } from '@/api/hermes/system'
+import { NButton, NCheckbox, NCheckboxGroup, NForm, NFormItem, NModal, NInput, NSelect, useMessage, useDialog } from 'naive-ui'
+import { fetchProviderModels, updateProvider, type AvailableModelGroup } from '@/api/hermes/system'
 import { useModelsStore } from '@/stores/hermes/models'
 import { useAppStore } from '@/stores/hermes/app'
 import { useChatStore } from '@/stores/hermes/chat'
@@ -21,6 +21,13 @@ const isCustom = computed(() => !props.provider.builtin && props.provider.provid
 const isCopilot = computed(() => props.provider.provider === 'copilot')
 const displayName = computed(() => props.provider.label)
 const deleting = ref(false)
+const editing = ref(false)
+const editSaving = ref(false)
+const editFetchingModels = ref(false)
+const editBaseUrl = ref('')
+const editApiKey = ref('')
+const editModel = ref('')
+const editModelOptions = ref<Array<{ label: string; value: string }>>([])
 
 const showAliasListModal = ref(false)
 const showAliasModal = ref(false)
@@ -38,6 +45,7 @@ const visibilityRule = computed(() => appStore.getProviderVisibility(props.provi
 const isFiltered = computed(() => visibilityRule.value.mode === 'include')
 const visibleCountLabel = computed(() => `${props.provider.models.length}/${allModels.value.length}`)
 const isDefaultProvider = computed(() => modelsStore.defaultProvider === props.provider.provider)
+const canEditBaseUrl = computed(() => isCustom.value || !!sourceProvider.value?.base_url_env)
 
 function isDefaultModel(model: string) {
   return isDefaultProvider.value && modelsStore.defaultModel === model
@@ -56,6 +64,69 @@ function openAliasEditor(model: string) {
   aliasModel.value = model
   aliasInput.value = appStore.getModelAlias(model, props.provider.provider)
   showAliasModal.value = true
+}
+
+function openEditModal() {
+  editBaseUrl.value = props.provider.base_url || sourceProvider.value?.base_url || ''
+  editApiKey.value = props.provider.api_key || ''
+  editModel.value = modelsStore.defaultProvider === props.provider.provider
+    ? modelsStore.defaultModel
+    : props.provider.models[0] || ''
+  editModelOptions.value = allModels.value.map(model => ({ label: model, value: model }))
+  editing.value = true
+}
+
+async function fetchEditModels() {
+  if (!editBaseUrl.value.trim()) {
+    message.warning(t('models.enterBaseUrl'))
+    return
+  }
+  editFetchingModels.value = true
+  try {
+    const res = await fetchProviderModels({
+      base_url: editBaseUrl.value.trim(),
+      api_key: editApiKey.value.trim(),
+      provider: props.provider.provider,
+      label: displayName.value,
+      update_cache: true,
+    })
+    editModelOptions.value = res.models.map(model => ({ label: model, value: model }))
+    if (res.models.length > 0 && !res.models.includes(editModel.value)) {
+      editModel.value = res.models[0]
+    }
+    message.success(t('models.foundModels', { count: res.models.length }))
+  } catch (e: any) {
+    message.error(e?.message || t('models.fetchFailed'))
+  } finally {
+    editFetchingModels.value = false
+  }
+}
+
+async function saveEdit() {
+  if (!editApiKey.value.trim() && !['cliproxyapi', 'xai-oauth', 'openai-codex'].includes(props.provider.provider)) {
+    message.warning(t('models.apiKeyRequired'))
+    return
+  }
+  if (!editModel.value.trim()) {
+    message.warning(t('models.modelRequired'))
+    return
+  }
+  editSaving.value = true
+  try {
+    await updateProvider(props.provider.provider, {
+      api_key: editApiKey.value.trim(),
+      ...(canEditBaseUrl.value ? { base_url: editBaseUrl.value.trim() } : {}),
+      ...(isCustom.value ? { model: editModel.value.trim() } : {}),
+    })
+    await modelsStore.setDefaultModel(editModel.value.trim(), props.provider.provider)
+    await modelsStore.fetchProviders()
+    editing.value = false
+    message.success(t('settings.models.saved'))
+  } catch (e: any) {
+    message.error(e?.message || t('settings.models.saveFailed'))
+  } finally {
+    editSaving.value = false
+  }
 }
 
 async function saveAlias() {
@@ -206,10 +277,59 @@ async function handleDelete() {
     </div>
 
     <div class="card-actions">
+      <NButton size="tiny" quaternary @click="openEditModal">{{ t('common.edit') }}</NButton>
       <NButton size="tiny" quaternary @click="showAliasListModal = true">{{ t('models.aliasManage') }}</NButton>
       <NButton size="tiny" quaternary @click="openVisibilityModal">{{ t('models.manageVisibleModels') }}</NButton>
       <NButton size="tiny" quaternary type="error" :loading="deleting" @click="handleDelete">{{ t('common.delete') }}</NButton>
     </div>
+
+    <NModal
+      v-model:show="editing"
+      preset="card"
+      :title="t('common.edit') + ' ' + displayName"
+      :style="{ width: 'min(520px, calc(100vw - 32px))' }"
+      :mask-closable="!editSaving"
+    >
+      <NForm label-placement="top">
+        <NFormItem :label="t('models.baseUrl')">
+          <NInput
+            v-model:value="editBaseUrl"
+            :disabled="!canEditBaseUrl"
+            :placeholder="t('models.baseUrlPlaceholder')"
+          />
+        </NFormItem>
+        <NFormItem :label="t('models.apiKey')">
+          <NInput
+            v-model:value="editApiKey"
+            type="password"
+            show-password-on="click"
+            :placeholder="t('models.apiKeyPlaceholder')"
+            autocomplete="off"
+          />
+        </NFormItem>
+        <NFormItem :label="t('models.defaultModel')">
+          <div class="edit-model-row">
+            <NSelect
+              v-model:value="editModel"
+              :options="editModelOptions"
+              filterable
+              tag
+              :placeholder="t('models.selectOrInput')"
+            />
+            <NButton :loading="editFetchingModels" @click="fetchEditModels">
+              {{ t('common.fetch') }}
+            </NButton>
+          </div>
+        </NFormItem>
+      </NForm>
+      <template #footer>
+        <div class="model-alias-actions">
+          <div class="model-alias-spacer" />
+          <NButton :disabled="editSaving" @click="editing = false">{{ t('common.cancel') }}</NButton>
+          <NButton type="primary" :loading="editSaving" @click="saveEdit">{{ t('common.save') }}</NButton>
+        </div>
+      </template>
+    </NModal>
 
     <NModal
       v-model:show="showAliasListModal"
@@ -545,6 +665,17 @@ async function handleDelete() {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.edit-model-row {
+  display: flex;
+  width: 100%;
+  gap: 8px;
+
+  .n-select {
+    flex: 1;
+    min-width: 0;
+  }
 }
 
 .model-alias-spacer {

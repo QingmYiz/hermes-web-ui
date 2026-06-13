@@ -252,6 +252,22 @@ export async function updateProvider(poolKey: string, data: {
   })
 }
 
+export async function configureProfileModels(data: {
+  profile: string
+  provider: string
+  models: string[]
+  default: string
+  sourceProfile?: string
+  label?: string
+  base_url?: string
+  api_key?: string
+}): Promise<void> {
+  await request('/api/hermes/config/profile-models', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
 export async function updateModelVisibility(data: {
   provider: string
   mode: 'all' | 'include'

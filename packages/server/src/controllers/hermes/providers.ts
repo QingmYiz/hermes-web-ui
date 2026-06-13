@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'fs'
 import { writeFile } from 'fs/promises'
 import { join } from 'path'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
-import { updateConfigYamlForProfile, saveEnvValueForProfile, PROVIDER_ENV_MAP } from '../../services/config-helpers'
+import { readConfigYamlForProfile, updateConfigYamlForProfile, saveEnvValueForProfile, PROVIDER_ENV_MAP } from '../../services/config-helpers'
 import { PROVIDER_PRESETS } from '../../shared/providers'
 import { logger } from '../../services/logger'
 
@@ -66,6 +66,44 @@ function shouldPersistBuiltinBaseUrl(poolKey: string, requestedBaseUrl: string):
   const presetBaseUrl = PROVIDER_PRESETS.find(p => p.value === poolKey)?.base_url || ''
   if (!requestedBaseUrl || !presetBaseUrl) return !!requestedBaseUrl
   return normalizeBaseUrl(requestedBaseUrl) !== normalizeBaseUrl(presetBaseUrl)
+}
+
+function uniqueStrings(values: unknown): string[] {
+  if (!Array.isArray(values)) return []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const value of values) {
+    const text = String(value || '').trim()
+    if (!text || seen.has(text)) continue
+    seen.add(text)
+    out.push(text)
+  }
+  return out
+}
+
+function readEnvValue(profile: string, key: string): string {
+  if (!key) return ''
+  try {
+    const envPath = join(getProfileDir(profile), '.env')
+    const raw = readFileSync(envPath, 'utf-8')
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const match = raw.match(new RegExp(`^${escaped}\\s*=\\s*(.+)`, 'm'))
+    return match?.[1]?.trim() || ''
+  } catch {
+    return ''
+  }
+}
+
+function providerNameFromKey(poolKey: string, label?: string): string {
+  if (poolKey.startsWith('custom:')) return poolKey.slice('custom:'.length)
+  return String(label || poolKey).trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-')
+}
+
+function ensureProfileVisibility(config: Record<string, any>, provider: string, models: string[]) {
+  if (!config.model_visibility || typeof config.model_visibility !== 'object' || Array.isArray(config.model_visibility)) {
+    config.model_visibility = {}
+  }
+  config.model_visibility[provider] = { mode: 'include', models }
 }
 
 export async function create(ctx: any) {
@@ -188,12 +226,127 @@ export async function update(ctx: any) {
         ctx.status = 400; ctx.body = { error: `Cannot update credentials for "${poolKey}"` }; return
       }
       if (api_key !== undefined) { await saveEnvValueForProfile(profile, envMapping.api_key_env, api_key) }
+      if (base_url !== undefined && envMapping.base_url_env && shouldPersistBuiltinBaseUrl(poolKey, base_url)) {
+        await saveEnvValueForProfile(profile, envMapping.base_url_env, builtinBaseUrl(poolKey, base_url))
+      }
     }
     // TODO: Test if provider works without gateway restart
     // try { await hermesCli.restartGateway() } catch (e: any) { logger.error(e, 'Gateway restart failed') }
     ctx.body = { success: true }
   } catch (err: any) {
     ctx.status = 500; ctx.body = { error: err.message }
+  }
+}
+
+export async function configureProfileModels(ctx: any) {
+  const body = ctx.request.body as {
+    profile?: unknown
+    sourceProfile?: unknown
+    provider?: unknown
+    label?: unknown
+    base_url?: unknown
+    api_key?: unknown
+    models?: unknown
+    default?: unknown
+  }
+  const targetProfile = String(body.profile || '').trim()
+  const sourceProfile = String(body.sourceProfile || '').trim() || requestedProfile(ctx)
+  const poolKey = String(body.provider || '').trim()
+  const selectedModels = uniqueStrings(body.models)
+  const defaultModel = String(body.default || selectedModels[0] || '').trim()
+  const label = String(body.label || poolKey).trim()
+  const requestedBaseUrl = String(body.base_url || '').trim()
+
+  if (!targetProfile || !poolKey || selectedModels.length === 0 || !defaultModel) {
+    ctx.status = 400
+    ctx.body = { error: 'Missing target profile, provider, or models' }
+    return
+  }
+  if (!selectedModels.includes(defaultModel)) {
+    ctx.status = 400
+    ctx.body = { error: 'Default model must be included in selected models' }
+    return
+  }
+
+  try {
+    const isBuiltin = poolKey in PROVIDER_ENV_MAP
+    const isCustom = poolKey.startsWith('custom:')
+    if (!isBuiltin && !isCustom) {
+      ctx.status = 400
+      ctx.body = { error: `Unknown provider "${poolKey}"` }
+      return
+    }
+
+    if (isBuiltin) {
+      const envMapping = PROVIDER_ENV_MAP[poolKey]
+      const effectiveBaseUrl = builtinBaseUrl(poolKey, requestedBaseUrl)
+      const apiKey = String(body.api_key || '').trim() || readEnvValue(sourceProfile, envMapping.api_key_env)
+      if (envMapping.api_key_env && !apiKey && !OPTIONAL_API_KEY_PROVIDERS.has(poolKey)) {
+        ctx.status = 400
+        ctx.body = { error: `Provider "${poolKey}" has no configured API key` }
+        return
+      }
+      if (envMapping.api_key_env) {
+        await saveEnvValueForProfile(targetProfile, envMapping.api_key_env, apiKey)
+      }
+      if (envMapping.base_url_env && shouldPersistBuiltinBaseUrl(poolKey, effectiveBaseUrl)) {
+        await saveEnvValueForProfile(targetProfile, envMapping.base_url_env, effectiveBaseUrl)
+      }
+      await updateConfigYamlForProfile(targetProfile, (config) => {
+        if (typeof config.model !== 'object' || config.model === null || Array.isArray(config.model)) config.model = {}
+        config.model.default = defaultModel
+        config.model.provider = poolKey
+        delete config.model.base_url
+        delete config.model.api_key
+        ensureProfileVisibility(config, poolKey, selectedModels)
+        return config
+      })
+      ctx.body = { success: true }
+      return
+    }
+
+    const sourceConfig = await readConfigYamlForProfile(sourceProfile)
+    const sourceEntry = Array.isArray(sourceConfig.custom_providers)
+      ? (sourceConfig.custom_providers as any[]).find((entry: any) => `custom:${String(entry?.name || '').trim().toLowerCase().replace(/ /g, '-')}` === poolKey)
+      : null
+    const sourceName = providerNameFromKey(poolKey, label)
+    const effectiveBaseUrl = requestedBaseUrl || sourceEntry?.base_url || ''
+    const apiKey = String(body.api_key || '').trim() || String(sourceEntry?.api_key || '').trim()
+    if (!effectiveBaseUrl || !apiKey) {
+      ctx.status = 400
+      ctx.body = { error: `Custom provider "${poolKey}" has no configured base_url or API key` }
+      return
+    }
+
+    await updateConfigYamlForProfile(targetProfile, (config) => {
+      if (!Array.isArray(config.custom_providers)) config.custom_providers = []
+      const providers = config.custom_providers as any[]
+      let entry = providers.find((item: any) => `custom:${String(item?.name || '').trim().toLowerCase().replace(/ /g, '-')}` === poolKey)
+      if (!entry) {
+        entry = buildProviderEntry(sourceName, effectiveBaseUrl, apiKey, defaultModel)
+        providers.push(entry)
+      }
+      entry.name = sourceName
+      entry.base_url = effectiveBaseUrl
+      entry.api_key = apiKey
+      entry.model = defaultModel
+      entry.models = entry.models && typeof entry.models === 'object' && !Array.isArray(entry.models) ? entry.models : {}
+      for (const model of selectedModels) {
+        entry.models[model] = entry.models[model] || {}
+      }
+      if (sourceEntry?.api_mode) entry.api_mode = sourceEntry.api_mode
+      if (typeof config.model !== 'object' || config.model === null || Array.isArray(config.model)) config.model = {}
+      config.model.default = defaultModel
+      config.model.provider = poolKey
+      delete config.model.base_url
+      delete config.model.api_key
+      ensureProfileVisibility(config, poolKey, selectedModels)
+      return config
+    })
+    ctx.body = { success: true }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
   }
 }
 

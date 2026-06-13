@@ -1,6 +1,6 @@
 import type { Context } from 'koa'
 import { existsSync } from 'fs'
-import { mkdir, writeFile } from 'fs/promises'
+import { mkdir, readFile, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { checkPassword, recordPasswordFailure, recordPasswordSuccess, extractIp, getLockedIps, unlockIp, unlockAll } from '../services/login-limiter'
 import {
@@ -27,7 +27,7 @@ import { issueUserJwt } from '../middleware/user-auth'
 import { listProfileNamesFromDisk } from '../services/hermes/hermes-profile'
 import { detectHermesRootHome } from '../services/hermes/hermes-path'
 import { HermesSkillInjector } from '../services/hermes/skill-injector'
-import { updateConfigYamlForProfile } from '../services/config-helpers'
+import { PROVIDER_ENV_MAP, saveEnvValueForProfile, updateConfigYamlForProfile } from '../services/config-helpers'
 import { adjustUserCredits } from '../db/hermes/billing-store'
 
 const REGISTER_INITIAL_CREDITS = 100
@@ -265,8 +265,31 @@ async function ensureRegistrationProfile(profileName: string): Promise<void> {
         default: String((currentModelConfig as Record<string, unknown>).default || '').trim() || REGISTER_DEFAULT_MODEL,
         provider: String((currentModelConfig as Record<string, unknown>).provider || '').trim() || REGISTER_DEFAULT_PROVIDER,
       },
+      model_visibility: {
+        ...(config.model_visibility && typeof config.model_visibility === 'object' && !Array.isArray(config.model_visibility) ? config.model_visibility : {}),
+        [REGISTER_DEFAULT_PROVIDER]: { mode: 'include', models: [REGISTER_DEFAULT_MODEL] },
+      },
     }
   })
+
+  const xiaomiEnv = PROVIDER_ENV_MAP[REGISTER_DEFAULT_PROVIDER]
+  if (xiaomiEnv) {
+    try {
+      const defaultEnv = await readFile(join(hermesHome, 'profiles', 'default', '.env'), 'utf-8')
+      const readEnvValue = (key: string) => {
+        if (!key) return ''
+        const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        const match = defaultEnv.match(new RegExp(`^${escaped}\\s*=\\s*(.+)`, 'm'))
+        return match?.[1]?.trim() || ''
+      }
+      const apiKey = readEnvValue(xiaomiEnv.api_key_env)
+      const baseUrl = readEnvValue(xiaomiEnv.base_url_env)
+      if (apiKey) await saveEnvValueForProfile(profileName, xiaomiEnv.api_key_env, apiKey)
+      if (baseUrl) await saveEnvValueForProfile(profileName, xiaomiEnv.base_url_env, baseUrl)
+    } catch {
+      // New users still get the default model setting even if no Xiaomi key exists yet.
+    }
+  }
 
   try {
     const targetDir = HermesSkillInjector.resolveTargetDirForProfile(profileName)
