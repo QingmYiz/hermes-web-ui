@@ -24,7 +24,7 @@ import {
   type UserStatus,
 } from '../db/hermes/users-store'
 import { issueUserJwt } from '../middleware/user-auth'
-import { listProfileNamesFromDisk } from '../services/hermes/hermes-profile'
+import { getProfileDir, listProfileNamesFromDisk } from '../services/hermes/hermes-profile'
 import { detectHermesRootHome } from '../services/hermes/hermes-path'
 import { HermesSkillInjector } from '../services/hermes/skill-injector'
 import { PROVIDER_ENV_MAP, saveEnvValueForProfile, updateConfigYamlForProfile } from '../services/config-helpers'
@@ -275,7 +275,7 @@ async function ensureRegistrationProfile(profileName: string): Promise<void> {
   const xiaomiEnv = PROVIDER_ENV_MAP[REGISTER_DEFAULT_PROVIDER]
   if (xiaomiEnv) {
     try {
-      const defaultEnv = await readFile(join(hermesHome, 'profiles', 'default', '.env'), 'utf-8')
+      const defaultEnv = await readFile(join(getProfileDir('default'), '.env'), 'utf-8')
       const readEnvValue = (key: string) => {
         if (!key) return ''
         const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -500,7 +500,7 @@ export async function createManagedUser(ctx: Context) {
   const password = String(body.password || '')
   const role = normalizeRole(body.role || 'admin')
   const status = normalizeStatus(body.status || 'active')
-  const profiles = normalizeProfiles(body.profiles)
+  let profiles = normalizeProfiles(body.profiles)
 
   if (username.length < 2) {
     ctx.status = 400
@@ -523,6 +523,10 @@ export async function createManagedUser(ctx: Context) {
     return
   }
 
+  if (role === 'admin' && profiles.length === 0) {
+    profiles = [uniqueProfileNameForRegistration(username)]
+  }
+
   await ensureManagedProfiles(profiles)
   const missingProfile = validateProfiles(profiles)
   if (missingProfile) {
@@ -540,7 +544,7 @@ export async function createManagedUser(ctx: Context) {
     defaultProfile: body.defaultProfile,
   })
   ctx.status = 201
-  ctx.body = { user, users: listUsers() }
+  ctx.body = { user, users: listUsers(), profiles: listProfileNamesFromDisk() }
 }
 
 /**
@@ -627,7 +631,7 @@ export async function updateManagedUser(ctx: Context) {
     profiles: nextRole === 'super_admin' ? [] : profiles,
     defaultProfile: body.defaultProfile,
   })
-  ctx.body = { user: findUserById(user.id), users: listUsers() }
+  ctx.body = { user: findUserById(user.id), users: listUsers(), profiles: listProfileNamesFromDisk() }
 }
 
 /**
@@ -655,7 +659,7 @@ export async function deleteManagedUser(ctx: Context) {
   }
 
   deleteUser(user.id)
-  ctx.body = { success: true, users: listUsers() }
+  ctx.body = { success: true, users: listUsers(), profiles: listProfileNamesFromDisk() }
 }
 
 /**

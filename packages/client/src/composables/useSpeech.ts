@@ -6,6 +6,16 @@ import {
   type TtsProviderId,
 } from '@/api/hermes/tts'
 
+declare global {
+  interface Window {
+    HermesAndroid?: {
+      isSpeechAvailable?: () => boolean
+      speakText?: (messageId: string, text: string, lang?: string) => boolean
+      stopSpeech?: () => void
+    }
+  }
+}
+
 export interface SpeechOptions {
   lang?: string      // 语言 'zh-CN', 'en-US' 等
   voiceName?: string // 指定 WebSpeech 音色名称
@@ -68,6 +78,18 @@ export function useSpeech() {
   let playbackToken = 0
   const speechQueue: SpeechQueueItem[] = []
 
+  function getAndroidSpeechBridge() {
+    if (typeof window === 'undefined') return null
+    const bridge = window.HermesAndroid
+    if (!bridge || typeof bridge.speakText !== 'function') return null
+    return bridge
+  }
+
+  function isAndroidSpeechAvailable(): boolean {
+    const bridge = getAndroidSpeechBridge()
+    return !!bridge
+  }
+
   // 自定义 TTS（OpenAI / Custom / Edge）播放状态
   const isCustomPlaying = ref(false)
   const isCustomPaused = ref(false)
@@ -114,7 +136,7 @@ export function useSpeech() {
   }
 
   const isSupported = computed(() => {
-    return Boolean(
+    return isAndroidSpeechAvailable() || Boolean(
       typeof window !== 'undefined' &&
       window.speechSynthesis &&
       typeof window.speechSynthesis.speak === 'function' &&
@@ -150,6 +172,7 @@ export function useSpeech() {
     currentTtsAbort = null
     stopCustomAudioPlayback()
     clearCustomPlaybackState()
+    try { getAndroidSpeechBridge()?.stopSpeech?.() } catch { /* ignore native bridge failures */ }
     // Stop browser speech
     if (synth && (synth.speaking || synth.pending || synth.paused) && typeof synth.cancel === 'function') {
       synth.cancel()
@@ -211,8 +234,29 @@ export function useSpeech() {
 
   // ─── Browser Engine (Web Speech API) ────────────────────────
 
+  function speakViaAndroid(messageId: string, text: string, options: SpeechOptions, token: number): boolean {
+    const bridge = getAndroidSpeechBridge()
+    if (!bridge) return false
+    try {
+      const started = bridge.speakText?.(messageId, text, options.lang || 'zh-CN') !== false
+      if (!started || token !== playbackToken) return false
+      state.value.engine = 'browser'
+      state.value.isPlaying = true
+      state.value.isPaused = false
+      state.value.currentMessageId = messageId
+      state.value.progress = 0
+      return true
+    } catch (err) {
+      console.warn('[useSpeech] Android native TTS failed:', err)
+      return false
+    }
+  }
+
   function speakViaBrowser(messageId: string, text: string, options: SpeechOptions, token?: number) {
     token = token || ++playbackToken
+    if (isAndroidSpeechAvailable() && speakViaAndroid(messageId, text, options, token)) {
+      return
+    }
     if (!isSupported.value || !synth) {
       state.value = {
         isPlaying: false,
@@ -286,6 +330,31 @@ export function useSpeech() {
     }
 
     synth.speak(utterance)
+  }
+
+  function handleAndroidSpeechEvent(event: Event) {
+    const detail = (event as CustomEvent<{ type?: string; messageId?: string; error?: string }>).detail || {}
+    const messageId = detail.messageId || ''
+    if (!messageId || messageId !== state.value.currentMessageId) return
+    if (detail.type === 'end') {
+      state.value.isPlaying = false
+      state.value.isPaused = false
+      state.value.currentMessageId = null
+      state.value.engine = 'none'
+      if (speechQueue.length > 0) {
+        setTimeout(playNextQueuedSpeech, 0)
+      }
+    } else if (detail.type === 'error') {
+      console.warn('[useSpeech] Android native TTS error:', detail.error || 'unknown error')
+      state.value.isPlaying = false
+      state.value.isPaused = false
+      state.value.currentMessageId = null
+      state.value.engine = 'none'
+    }
+  }
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('hermes-android-tts', handleAndroidSpeechEvent)
   }
 
   // ─── OpenAI-compatible / unified custom TTS Engine ───────────
@@ -616,6 +685,9 @@ export function useSpeech() {
 
   onUnmounted(() => {
     stop()
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('hermes-android-tts', handleAndroidSpeechEvent)
+    }
     if (typeof synth?.removeEventListener === 'function') {
       synth.removeEventListener('voiceschanged', loadVoices)
     }

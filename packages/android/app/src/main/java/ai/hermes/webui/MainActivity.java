@@ -9,16 +9,22 @@ import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Insets;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.Settings;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
+import android.view.WindowInsets;
+import android.view.WindowManager;
 import android.webkit.DownloadListener;
 import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
@@ -48,9 +54,11 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 
-public class MainActivity extends android.app.Activity {
+public class MainActivity extends android.app.Activity implements TextToSpeech.OnInitListener {
     private static final int FILE_CHOOSER_REQUEST = 301;
     private static final int PERMISSION_REQUEST = 302;
     private static final String CHANNEL_ID = "hermes_mobile";
@@ -62,6 +70,9 @@ public class MainActivity extends android.app.Activity {
     private Button floatingKnob;
     private ValueCallback<Uri[]> filePathCallback;
     private boolean menuOpen = false;
+    private TextToSpeech textToSpeech;
+    private boolean textToSpeechReady = false;
+    private String activeSpeechMessageId = "";
     private float downRawX;
     private float downRawY;
     private int knobStartLeft;
@@ -72,10 +83,37 @@ public class MainActivity extends android.app.Activity {
         super.onCreate(savedInstanceState);
         createNotificationChannel();
         buildLayout();
+        configureWindowInsets();
         configureWebView();
+        configureTextToSpeech();
         requestCorePermissions();
         webView.loadUrl(BuildConfig.DEFAULT_WEB_URL);
         checkUpdate(false);
+    }
+
+    private void configureWindowInsets() {
+        Window window = getWindow();
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        if (Build.VERSION.SDK_INT >= 21) {
+            window.setStatusBarColor(Color.WHITE);
+            window.setNavigationBarColor(Color.WHITE);
+        }
+        if (Build.VERSION.SDK_INT >= 23) {
+            int flags = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            if (Build.VERSION.SDK_INT >= 26) flags |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+            window.getDecorView().setSystemUiVisibility(flags);
+        }
+        if (Build.VERSION.SDK_INT >= 30) {
+            root.setOnApplyWindowInsetsListener((view, insets) -> {
+                Insets bars = insets.getInsets(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                Insets ime = insets.getInsets(WindowInsets.Type.ime());
+                int bottom = Math.max(bars.bottom, ime.bottom);
+                view.setPadding(0, bars.top, 0, bottom);
+                return insets;
+            });
+        } else {
+            root.setFitsSystemWindows(true);
+        }
     }
 
     private void buildLayout() {
@@ -153,6 +191,71 @@ public class MainActivity extends android.app.Activity {
             }
         });
         webView.setDownloadListener(buildDownloadListener());
+    }
+
+    private void configureTextToSpeech() {
+        textToSpeech = new TextToSpeech(this, this);
+    }
+
+    @Override
+    public void onInit(int status) {
+        textToSpeechReady = status == TextToSpeech.SUCCESS;
+        if (!textToSpeechReady || textToSpeech == null) return;
+        int languageResult = textToSpeech.setLanguage(Locale.CHINA);
+        if (languageResult == TextToSpeech.LANG_MISSING_DATA || languageResult == TextToSpeech.LANG_NOT_SUPPORTED) {
+            textToSpeech.setLanguage(Locale.getDefault());
+        }
+        textToSpeech.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+            @Override
+            public void onStart(String utteranceId) {
+                dispatchSpeechEvent("start", activeSpeechMessageId, "");
+            }
+
+            @Override
+            public void onDone(String utteranceId) {
+                dispatchSpeechEvent("end", activeSpeechMessageId, "");
+                activeSpeechMessageId = "";
+            }
+
+            @Override
+            public void onError(String utteranceId) {
+                dispatchSpeechEvent("error", activeSpeechMessageId, "TextToSpeech failed");
+                activeSpeechMessageId = "";
+            }
+        });
+    }
+
+    private boolean speakNative(String messageId, String text, String lang) {
+        if (!textToSpeechReady || textToSpeech == null || text == null || text.trim().isEmpty()) return false;
+        if (lang != null && lang.toLowerCase(Locale.ROOT).startsWith("zh")) {
+            textToSpeech.setLanguage(Locale.CHINA);
+        }
+        activeSpeechMessageId = messageId == null ? "" : messageId;
+        String utteranceId = "hermes-tts-" + System.currentTimeMillis();
+        int result;
+        if (Build.VERSION.SDK_INT >= 21) {
+            Bundle params = new Bundle();
+            result = textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId);
+        } else {
+            HashMap<String, String> params = new HashMap<>();
+            params.put(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId);
+            result = textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, params);
+        }
+        return result == TextToSpeech.SUCCESS;
+    }
+
+    private void stopNativeSpeech() {
+        activeSpeechMessageId = "";
+        if (textToSpeech != null) textToSpeech.stop();
+    }
+
+    private void dispatchSpeechEvent(String type, String messageId, String error) {
+        String js = "window.dispatchEvent(new CustomEvent('hermes-android-tts',{detail:{"
+            + "type:" + JSONObject.quote(type)
+            + ",messageId:" + JSONObject.quote(messageId == null ? "" : messageId)
+            + ",error:" + JSONObject.quote(error == null ? "" : error)
+            + "}}));";
+        runOnUiThread(() -> webView.evaluateJavascript(js, null));
     }
 
     private DownloadListener buildDownloadListener() {
@@ -428,6 +531,16 @@ public class MainActivity extends android.app.Activity {
         }
     }
 
+    @Override
+    protected void onDestroy() {
+        stopNativeSpeech();
+        if (textToSpeech != null) {
+            textToSpeech.shutdown();
+            textToSpeech = null;
+        }
+        super.onDestroy();
+    }
+
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
@@ -451,6 +564,21 @@ public class MainActivity extends android.app.Activity {
         @JavascriptInterface
         public void downloadContent() {
             runOnUiThread(() -> fetchContentManifest(true));
+        }
+
+        @JavascriptInterface
+        public boolean isSpeechAvailable() {
+            return textToSpeechReady;
+        }
+
+        @JavascriptInterface
+        public boolean speakText(String messageId, String text, String lang) {
+            return speakNative(messageId, text, lang);
+        }
+
+        @JavascriptInterface
+        public void stopSpeech() {
+            runOnUiThread(MainActivity.this::stopNativeSpeech);
         }
     }
 }
