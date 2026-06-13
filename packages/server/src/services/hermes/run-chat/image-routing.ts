@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { config } from '../../../config'
 import { normalizeImageGenerationRoutingConfig, readAppConfig } from '../../app-config'
-import { PROVIDER_ENV_MAP, readConfigYamlForProfile } from '../../config-helpers'
+import { PROVIDER_ENV_MAP, readConfigYaml, readConfigYamlForProfile } from '../../config-helpers'
 import { getProfileDir } from '../hermes-profile'
 import { PROVIDER_PRESETS } from '../../../shared/providers'
 import { contentBlocksToString } from './content-blocks'
@@ -85,6 +85,20 @@ function readProfileEnvValue(profile: string, key: string): string {
   }
 }
 
+function findCustomProvider(
+  configYaml: Record<string, any>,
+  providerKey: string,
+): { name?: string; base_url?: string; api_key?: string; model?: string } | null {
+  const customProviders = Array.isArray(configYaml.custom_providers)
+    ? configYaml.custom_providers as Array<{ name?: string; base_url?: string; api_key?: string; model?: string }>
+    : []
+  return customProviders.find((entry) => {
+    const name = String(entry?.name || '').trim()
+    if (!name) return false
+    return providerKeyForCustom(name) === providerKey || name === providerKey
+  }) || null
+}
+
 function buildApiUrl(baseUrl: string, pathWithV1: string): string {
   const base = baseUrl.replace(/\/+$/, '')
   const apiPath = pathWithV1.startsWith('/') ? pathWithV1 : `/${pathWithV1}`
@@ -142,14 +156,8 @@ export async function resolveImageGenerationProviderRuntime(
   }
 
   const profileConfig = await readConfigYamlForProfile(profile)
-  const customProviders = Array.isArray(profileConfig.custom_providers)
-    ? profileConfig.custom_providers as Array<{ name?: string; base_url?: string; api_key?: string; model?: string }>
-    : []
-  const customProvider = customProviders.find((entry) => {
-    const name = String(entry?.name || '').trim()
-    if (!name) return false
-    return providerKeyForCustom(name) === providerKey || name === providerKey
-  })
+  const customProvider = findCustomProvider(profileConfig, providerKey)
+    || findCustomProvider(await readConfigYaml(), providerKey)
   if (customProvider) {
     const baseUrl = String(customProvider.base_url || '').trim()
     if (!baseUrl) throw new Error(`Image generation provider "${providerKey}" is missing base_url`)
@@ -182,7 +190,29 @@ export async function resolveImageGenerationProviderRuntime(
   }
 }
 
+function collectImageItemsFromString(value: string, images: Array<{ base64?: string; url?: string }>): void {
+  const dataUriMatches = value.match(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/g) || []
+  for (const match of dataUriMatches) {
+    images.push({ base64: match })
+  }
+
+  const markdownImagePattern = /!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g
+  let markdownMatch: RegExpExecArray | null
+  while ((markdownMatch = markdownImagePattern.exec(value))) {
+    images.push({ url: markdownMatch[1] })
+  }
+
+  const urlMatches = value.match(/https?:\/\/\S+\.(?:png|jpe?g|webp|gif)(?:\?\S*)?/gi) || []
+  for (const match of urlMatches) {
+    images.push({ url: match.replace(/[),.;]+$/, '') })
+  }
+}
+
 function collectImageItems(value: unknown, images: Array<{ base64?: string; url?: string }> = []): Array<{ base64?: string; url?: string }> {
+  if (typeof value === 'string') {
+    collectImageItemsFromString(value, images)
+    return images
+  }
   if (!value || typeof value !== 'object') return images
   const record = value as Record<string, unknown>
   for (const key of ['b64_json', 'base64', 'image_base64', 'result']) {
@@ -198,6 +228,15 @@ function collectImageItems(value: unknown, images: Array<{ base64?: string; url?
     if (Array.isArray(list)) {
       for (const item of list) collectImageItems(item, images)
     }
+  }
+  for (const key of ['content', 'text']) {
+    if (typeof record[key] === 'string') {
+      collectImageItemsFromString(record[key] as string, images)
+    }
+  }
+  if (record.message) collectImageItems(record.message, images)
+  if (Array.isArray(record.choices)) {
+    for (const choice of record.choices) collectImageItems(choice, images)
   }
   return images
 }
@@ -245,7 +284,7 @@ export async function generateImageForChat(
   }
   if (runtime.apiKey) headers.Authorization = `Bearer ${runtime.apiKey}`
 
-  const res = await fetch(buildApiUrl(runtime.baseUrl, '/v1/images/generations'), {
+  let response = await fetch(buildApiUrl(runtime.baseUrl, '/v1/images/generations'), {
     method: 'POST',
     headers,
     signal: AbortSignal.timeout(10 * 60 * 1000),
@@ -259,13 +298,26 @@ export async function generateImageForChat(
     }),
   })
 
-  if (!res.ok) {
-    const detail = await res.text().catch(() => '')
-    throw new Error(`image generation request failed: ${res.status} ${detail || res.statusText}`)
+  if (response.status === 404) {
+    response = await fetch(buildApiUrl(runtime.baseUrl, '/v1/chat/completions'), {
+      method: 'POST',
+      headers,
+      signal: AbortSignal.timeout(10 * 60 * 1000),
+      body: JSON.stringify({
+        model: runtime.model,
+        messages: [{ role: 'user', content: prompt }],
+        stream: false,
+      }),
+    })
   }
 
-  const response = await res.json()
-  const items = collectImageItems(response)
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(`image generation request failed: ${response.status} ${detail || response.statusText}`)
+  }
+
+  const responseBody = await response.json()
+  const items = collectImageItems(responseBody)
   if (items.length === 0) {
     throw new Error('image generation response did not contain an image')
   }
