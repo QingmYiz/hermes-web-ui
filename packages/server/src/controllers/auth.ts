@@ -27,6 +27,12 @@ import { issueUserJwt } from '../middleware/user-auth'
 import { listProfileNamesFromDisk } from '../services/hermes/hermes-profile'
 import { detectHermesRootHome } from '../services/hermes/hermes-path'
 import { HermesSkillInjector } from '../services/hermes/skill-injector'
+import { updateConfigYamlForProfile } from '../services/config-helpers'
+import { adjustUserCredits } from '../db/hermes/billing-store'
+
+const REGISTER_INITIAL_CREDITS = 100
+const REGISTER_DEFAULT_PROVIDER = 'xiaomi'
+const REGISTER_DEFAULT_MODEL = 'mimo-v2.5'
 
 /**
  * GET /api/auth/status
@@ -247,6 +253,21 @@ async function ensureRegistrationProfile(profileName: string): Promise<void> {
     await writeFile(configPath, '{}\n', 'utf-8')
   }
 
+  await updateConfigYamlForProfile(profileName, (config) => {
+    const currentModel = config.model
+    const currentModelConfig = currentModel && typeof currentModel === 'object' && !Array.isArray(currentModel)
+      ? currentModel
+      : {}
+    return {
+      ...config,
+      model: {
+        ...currentModelConfig,
+        default: String((currentModelConfig as Record<string, unknown>).default || '').trim() || REGISTER_DEFAULT_MODEL,
+        provider: String((currentModelConfig as Record<string, unknown>).provider || '').trim() || REGISTER_DEFAULT_PROVIDER,
+      },
+    }
+  })
+
   try {
     const targetDir = HermesSkillInjector.resolveTargetDirForProfile(profileName)
     await new HermesSkillInjector(undefined, targetDir).injectMissingSkills()
@@ -297,6 +318,7 @@ export async function register(ctx: Context) {
       ctx.body = { error: 'Failed to create user' }
       return
     }
+    adjustUserCredits(user.id, REGISTER_INITIAL_CREDITS, '注册赠送', null)
 
     const token = await issueUserJwt(user)
     ctx.status = 201

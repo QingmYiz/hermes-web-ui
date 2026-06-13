@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from 'vue'
+import { computed, h, onMounted, reactive, ref } from 'vue'
 import {
   NButton,
   NDataTable,
@@ -8,6 +8,7 @@ import {
   NInput,
   NInputNumber,
   NModal,
+  NSelect,
   NSpace,
   NTag,
   useMessage,
@@ -21,6 +22,7 @@ import {
   type BillingUserSummary,
   type ModelPrice,
 } from '@/api/hermes/billing'
+import { fetchAvailableModels } from '@/api/hermes/system'
 import { useAppStore } from '@/stores/hermes/app'
 
 const DEFAULT_PRICE = {
@@ -34,14 +36,24 @@ const message = useMessage()
 const appStore = useAppStore()
 const loading = ref(false)
 const savingPrice = ref('')
+const savingNewPrice = ref(false)
 const adjusting = ref(false)
 const selectedPeriod = ref(30)
 const summary = ref<BillingSummary | null>(null)
 const prices = ref<ModelPrice[]>([])
+const knownModels = ref<string[]>([])
 const showAdjustModal = ref(false)
 const adjustUser = ref<BillingUserSummary | null>(null)
 const adjustAmount = ref<number | null>(null)
 const adjustReason = ref('')
+
+const newPrice = reactive({
+  model: '',
+  input_credit_per_1k: DEFAULT_PRICE.input_credit_per_1k,
+  output_credit_per_1k: DEFAULT_PRICE.output_credit_per_1k,
+  input_rmb_per_1k: DEFAULT_PRICE.input_rmb_per_1k,
+  output_rmb_per_1k: DEFAULT_PRICE.output_rmb_per_1k,
+})
 
 const periodOptions = [
   { label: '7 天', value: 7 },
@@ -59,27 +71,28 @@ const totals = computed(() => summary.value?.totals || {
   sessions: 0,
 })
 
+const modelSelectOptions = computed(() => knownModels.value.map(model => ({ label: model, value: model })))
+
 const visiblePrices = computed(() => {
   const map = new Map(prices.value.map(price => [price.model, { ...price }]))
-  for (const group of appStore.modelGroups) {
-    for (const model of group.models || []) {
-      if (!map.has(model)) {
-        map.set(model, {
-          model,
-          ...DEFAULT_PRICE,
-          created_at: 0,
-          updated_at: 0,
-          explicit: false,
-        })
-      }
+  for (const model of knownModels.value) {
+    if (!map.has(model)) {
+      map.set(model, {
+        model,
+        ...DEFAULT_PRICE,
+        created_at: 0,
+        updated_at: 0,
+        explicit: false,
+      })
     }
   }
   return [...map.values()].sort((a, b) => a.model.localeCompare(b.model))
 })
 
-function formatNumber(value: number, digits = 2): string {
-  if (!Number.isFinite(value)) return '0'
-  return value.toLocaleString(undefined, {
+function formatNumber(value: number | undefined | null, digits = 2): string {
+  const numberValue = Number(value)
+  if (!Number.isFinite(numberValue)) return '0'
+  return numberValue.toLocaleString(undefined, {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   })
@@ -90,14 +103,70 @@ function formatInteger(value: number): string {
   return Math.round(value).toLocaleString()
 }
 
+function normalizePriceInput(row: Pick<ModelPrice,
+  'model' |
+  'input_credit_per_1k' |
+  'output_credit_per_1k' |
+  'input_rmb_per_1k' |
+  'output_rmb_per_1k'
+>) {
+  return {
+    model: row.model.trim(),
+    input_credit_per_1k: Math.max(0, Number(row.input_credit_per_1k) || 0),
+    output_credit_per_1k: Math.max(0, Number(row.output_credit_per_1k) || 0),
+    input_rmb_per_1k: Math.max(0, Number(row.input_rmb_per_1k) || 0),
+    output_rmb_per_1k: Math.max(0, Number(row.output_rmb_per_1k) || 0),
+  }
+}
+
+function collectModelsFromStore(): string[] {
+  const models = new Set<string>()
+  for (const group of appStore.modelGroups) {
+    for (const model of group.models || []) models.add(model)
+    for (const model of group.available_models || []) models.add(model)
+  }
+  for (const profile of appStore.profileModelGroups) {
+    for (const group of profile.groups || []) {
+      for (const model of group.models || []) models.add(model)
+      for (const model of group.available_models || []) models.add(model)
+    }
+  }
+  return [...models]
+}
+
+async function loadKnownModels() {
+  const models = new Set<string>(collectModelsFromStore())
+  try {
+    const res = await fetchAvailableModels()
+    for (const group of [...(res.groups || []), ...(res.allProviders || [])]) {
+      for (const model of group.models || []) models.add(model)
+      for (const model of group.available_models || []) models.add(model)
+    }
+    for (const profile of res.profiles || []) {
+      for (const group of profile.groups || []) {
+        for (const model of group.models || []) models.add(model)
+        for (const model of group.available_models || []) models.add(model)
+      }
+    }
+  } catch {
+    // The manual input remains available when the model catalog cannot be loaded.
+  }
+  knownModels.value = [...models].filter(Boolean).sort((a, b) => a.localeCompare(b))
+}
+
 async function loadBilling(days = selectedPeriod.value) {
   selectedPeriod.value = days
   loading.value = true
   try {
     await appStore.loadModels()
+    await loadKnownModels()
     const res = await fetchBillingSummary(days)
     summary.value = res
     prices.value = res.prices.map(price => ({ ...price }))
+    for (const price of res.prices) {
+      if (!knownModels.value.includes(price.model)) knownModels.value.push(price.model)
+    }
+    knownModels.value = [...new Set(knownModels.value)].sort((a, b) => a.localeCompare(b))
   } catch (err: any) {
     message.error(err.message || '计费数据加载失败')
   } finally {
@@ -105,17 +174,55 @@ async function loadBilling(days = selectedPeriod.value) {
   }
 }
 
+async function persistPrice(row: Pick<ModelPrice,
+  'model' |
+  'input_credit_per_1k' |
+  'output_credit_per_1k' |
+  'input_rmb_per_1k' |
+  'output_rmb_per_1k'
+>) {
+  const payload = normalizePriceInput(row)
+  if (!payload.model) {
+    message.error('请输入模型 ID')
+    return null
+  }
+  const res = await saveModelPrice(payload)
+  prices.value = res.prices.map(price => ({ ...price }))
+  if (!knownModels.value.includes(payload.model)) {
+    knownModels.value = [...knownModels.value, payload.model].sort((a, b) => a.localeCompare(b))
+  }
+  return res
+}
+
 async function handleSavePrice(row: ModelPrice) {
   savingPrice.value = row.model
   try {
-    const res = await saveModelPrice(row)
-    prices.value = res.prices.map(price => ({ ...price }))
+    await persistPrice(row)
     await loadBilling()
     message.success('模型价格已保存')
   } catch (err: any) {
     message.error(err.message || '价格保存失败')
   } finally {
     savingPrice.value = ''
+  }
+}
+
+async function handleAddPrice() {
+  savingNewPrice.value = true
+  try {
+    const res = await persistPrice(newPrice)
+    if (!res) return
+    message.success('模型价格已保存')
+    newPrice.model = ''
+    newPrice.input_credit_per_1k = DEFAULT_PRICE.input_credit_per_1k
+    newPrice.output_credit_per_1k = DEFAULT_PRICE.output_credit_per_1k
+    newPrice.input_rmb_per_1k = DEFAULT_PRICE.input_rmb_per_1k
+    newPrice.output_rmb_per_1k = DEFAULT_PRICE.output_rmb_per_1k
+    await loadBilling()
+  } catch (err: any) {
+    message.error(err.message || '价格保存失败')
+  } finally {
+    savingNewPrice.value = false
   }
 }
 
@@ -151,7 +258,7 @@ async function submitAdjustCredits() {
 const userColumns = computed<DataTableColumns<BillingUserSummary>>(() => [
   {
     type: 'expand',
-    renderExpand: (row) => h('div', { class: 'model-usage-list' }, row.model_usage.length
+    renderExpand: row => h('div', { class: 'model-usage-list' }, row.model_usage.length
       ? row.model_usage.map(item => h('div', { class: 'model-usage-row', key: `${row.id}-${item.model}` }, [
         h('span', { class: 'model-name', title: item.model }, item.model),
         h('span', `Token ${formatInteger(item.input_tokens + item.output_tokens)}`),
@@ -165,7 +272,7 @@ const userColumns = computed<DataTableColumns<BillingUserSummary>>(() => [
     title: 'Profile',
     key: 'profiles',
     minWidth: 160,
-    render: (row) => row.role === 'super_admin'
+    render: row => row.role === 'super_admin'
       ? h(NTag, { size: 'small', type: 'warning', bordered: false }, { default: () => '全部' })
       : h(NSpace, { size: 4 }, {
         default: () => row.profiles.length
@@ -205,6 +312,7 @@ const priceColumns: DataTableColumns<ModelPrice> = [
       min: 0,
       precision: 6,
       size: 'small',
+      style: { width: '100%' },
       onUpdateValue: value => { row.input_credit_per_1k = Number(value || 0) },
     }),
   },
@@ -217,6 +325,7 @@ const priceColumns: DataTableColumns<ModelPrice> = [
       min: 0,
       precision: 6,
       size: 'small',
+      style: { width: '100%' },
       onUpdateValue: value => { row.output_credit_per_1k = Number(value || 0) },
     }),
   },
@@ -229,6 +338,7 @@ const priceColumns: DataTableColumns<ModelPrice> = [
       min: 0,
       precision: 6,
       size: 'small',
+      style: { width: '100%' },
       onUpdateValue: value => { row.input_rmb_per_1k = Number(value || 0) },
     }),
   },
@@ -241,6 +351,7 @@ const priceColumns: DataTableColumns<ModelPrice> = [
       min: 0,
       precision: 6,
       size: 'small',
+      style: { width: '100%' },
       onUpdateValue: value => { row.output_rmb_per_1k = Number(value || 0) },
     }),
   },
@@ -318,7 +429,25 @@ onMounted(() => {
     </section>
 
     <section class="section-block">
-      <h4 class="sub-title">模型价格</h4>
+      <div class="price-heading">
+        <h4 class="sub-title">模型价格</h4>
+      </div>
+      <div class="price-editor">
+        <NSelect
+          v-model:value="newPrice.model"
+          class="price-model-input"
+          filterable
+          tag
+          clearable
+          :options="modelSelectOptions"
+          placeholder="选择或输入模型 ID"
+        />
+        <NInputNumber v-model:value="newPrice.input_credit_per_1k" :min="0" :precision="6" placeholder="输入积分/1K" />
+        <NInputNumber v-model:value="newPrice.output_credit_per_1k" :min="0" :precision="6" placeholder="输出积分/1K" />
+        <NInputNumber v-model:value="newPrice.input_rmb_per_1k" :min="0" :precision="6" placeholder="输入 RMB/1K" />
+        <NInputNumber v-model:value="newPrice.output_rmb_per_1k" :min="0" :precision="6" placeholder="输出 RMB/1K" />
+        <NButton type="primary" :loading="savingNewPrice" @click="handleAddPrice">添加/保存</NButton>
+      </div>
       <NDataTable
         :columns="priceColumns"
         :data="visiblePrices"
@@ -433,6 +562,25 @@ onMounted(() => {
   font-size: 14px;
 }
 
+.price-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.price-editor {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.4fr) repeat(4, minmax(120px, 1fr)) auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.price-model-input {
+  min-width: 0;
+}
+
 .model-usage-list {
   display: flex;
   flex-direction: column;
@@ -465,6 +613,12 @@ onMounted(() => {
   white-space: nowrap;
 }
 
+@media (max-width: 1100px) {
+  .price-editor {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 860px) {
   .toolbar {
     flex-direction: column;
@@ -472,6 +626,10 @@ onMounted(() => {
 
   .summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .price-editor {
+    grid-template-columns: 1fr;
   }
 }
 </style>

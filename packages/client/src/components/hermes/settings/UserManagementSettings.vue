@@ -1,6 +1,19 @@
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref } from 'vue'
-import { NButton, NDataTable, NForm, NFormItem, NInput, NModal, NPopconfirm, NSelect, NSpace, NTag, useMessage, type DataTableColumns } from 'naive-ui'
+import {
+  NButton,
+  NDataTable,
+  NForm,
+  NFormItem,
+  NInput,
+  NModal,
+  NPopconfirm,
+  NSelect,
+  NSpace,
+  NTag,
+  useMessage,
+  type DataTableColumns,
+} from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import {
   createManagedUser,
@@ -11,7 +24,15 @@ import {
   type UserRole,
   type UserStatus,
 } from '@/api/auth'
-import { addCustomModel, fetchAvailableModelsForProfile, updateDefaultModel, type AvailableModelGroup } from '@/api/hermes/system'
+import {
+  addCustomModel,
+  fetchAvailableModelsForProfile,
+  updateDefaultModel,
+  type AvailableModelGroup,
+} from '@/api/hermes/system'
+
+const DEFAULT_PROVIDER = 'xiaomi'
+const DEFAULT_MODEL = 'mimo-v2.5'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -54,10 +75,14 @@ const statusOptions = computed(() => [
   { label: t('users.status.disabled'), value: 'disabled' },
 ])
 
-const profileOptions = computed(() => profiles.value.map(profile => ({ label: profile, value: profile })))
+const profileOptions = computed(() => {
+  const all = Array.from(new Set([...profiles.value, ...form.profiles].filter(Boolean)))
+  return all.map(profile => ({ label: profile, value: profile }))
+})
+
 const editableProfileOptions = computed(() => form.profiles.map(profile => ({ label: profile, value: profile })))
 const modelProfileOptions = computed(() => (modelUser.value?.profiles || []).map(profile => ({ label: profile, value: profile })))
-const modelProviderOptions = computed(() => modelGroups.value.map(group => ({ label: group.label, value: group.provider })))
+const modelProviderOptions = computed(() => modelGroups.value.map(group => ({ label: group.label || group.provider, value: group.provider })))
 const modelOptions = computed(() => {
   const group = modelGroups.value.find(item => item.provider === modelForm.provider)
   return (group?.models || []).map(model => ({ label: model, value: model }))
@@ -71,6 +96,40 @@ function resetForm() {
   form.status = 'active'
   form.profiles = []
   form.defaultProfile = ''
+}
+
+function uniqueGroups(groups: AvailableModelGroup[]): AvailableModelGroup[] {
+  const merged = new Map<string, AvailableModelGroup>()
+  for (const group of groups) {
+    if (!group.provider) continue
+    const existing = merged.get(group.provider)
+    const models = Array.from(new Set([
+      ...(existing?.models || []),
+      ...(group.models || []),
+      ...(group.available_models || []),
+    ].filter(Boolean)))
+    merged.set(group.provider, {
+      ...group,
+      label: group.label || existing?.label || group.provider,
+      models,
+      available_models: models,
+    })
+  }
+  return [...merged.values()].sort((a, b) => (a.label || a.provider).localeCompare(b.label || b.provider))
+}
+
+function pickInitialProvider(groups: AvailableModelGroup[], defaultProvider?: string): string {
+  if (defaultProvider && groups.some(group => group.provider === defaultProvider)) return defaultProvider
+  if (groups.some(group => group.provider === DEFAULT_PROVIDER)) return DEFAULT_PROVIDER
+  return groups[0]?.provider || ''
+}
+
+function pickInitialModel(groups: AvailableModelGroup[], provider: string, defaultModel?: string): string {
+  const group = groups.find(item => item.provider === provider)
+  if (!group) return ''
+  if (defaultModel && group.models.includes(defaultModel)) return defaultModel
+  if (group.models.includes(DEFAULT_MODEL)) return DEFAULT_MODEL
+  return group.models[0] || ''
 }
 
 async function loadUsers() {
@@ -103,7 +162,7 @@ function openEdit(user: ManagedUser) {
 }
 
 function handleProfilesUpdate(value: string[]) {
-  form.profiles = value.map(item => item.trim()).filter(Boolean)
+  form.profiles = Array.from(new Set(value.map(item => item.trim()).filter(Boolean)))
   if (!form.profiles.includes(form.defaultProfile)) {
     form.defaultProfile = form.profiles[0] || ''
   }
@@ -161,10 +220,10 @@ async function loadProfileModels() {
   modelLoading.value = true
   try {
     const res = await fetchAvailableModelsForProfile(modelForm.profile)
-    modelGroups.value = res.groups
-    modelForm.provider = res.default_provider || res.groups[0]?.provider || ''
-    const group = modelGroups.value.find(item => item.provider === modelForm.provider) || modelGroups.value[0]
-    modelForm.model = res.default || group?.models[0] || ''
+    const groups = uniqueGroups([...(res.groups || []), ...(res.allProviders || [])])
+    modelGroups.value = groups
+    modelForm.provider = pickInitialProvider(groups, res.default_provider)
+    modelForm.model = pickInitialModel(groups, modelForm.provider, res.default)
   } catch (err: any) {
     message.error(err.message || '模型列表加载失败')
   } finally {
@@ -185,28 +244,30 @@ function openModelConfig(user: ManagedUser) {
 
 async function handleModelProfileUpdate(profile: string) {
   modelForm.profile = profile
+  modelForm.customModel = ''
   await loadProfileModels()
 }
 
 function handleModelProviderUpdate(provider: string) {
   modelForm.provider = provider
-  modelForm.model = modelOptions.value[0]?.value || ''
+  modelForm.model = pickInitialModel(modelGroups.value, provider, '')
 }
 
 async function saveModelConfig() {
-  if (!modelForm.profile || !modelForm.provider || (!modelForm.model && !modelForm.customModel.trim())) {
+  const customModel = modelForm.customModel.trim()
+  const targetModel = customModel || modelForm.model
+  if (!modelForm.profile || !modelForm.provider || !targetModel) {
     message.error('请选择 profile、模型供应商和模型')
     return
   }
   modelSaving.value = true
   try {
-    const customModel = modelForm.customModel.trim()
     if (customModel) {
       await addCustomModel({ provider: modelForm.provider, model: customModel })
       modelForm.model = customModel
     }
     await updateDefaultModel({
-      default: modelForm.model,
+      default: targetModel,
       provider: modelForm.provider,
       profile: modelForm.profile,
     })
@@ -258,7 +319,7 @@ const columns = computed<DataTableColumns<ManagedUser>>(() => [
     title: t('users.role'),
     key: 'role',
     width: 130,
-    render: (row) => h(NTag, { size: 'small', type: row.role === 'super_admin' ? 'warning' : 'default' }, {
+    render: row => h(NTag, { size: 'small', type: row.role === 'super_admin' ? 'warning' : 'default' }, {
       default: () => row.role === 'super_admin' ? t('users.roles.superAdmin') : t('users.roles.admin'),
     }),
   },
@@ -266,7 +327,7 @@ const columns = computed<DataTableColumns<ManagedUser>>(() => [
     title: t('users.statusLabel'),
     key: 'status',
     width: 110,
-    render: (row) => h(NTag, { size: 'small', type: row.status === 'active' ? 'success' : 'error' }, {
+    render: row => h(NTag, { size: 'small', type: row.status === 'active' ? 'success' : 'error' }, {
       default: () => row.status === 'active' ? t('users.status.active') : t('users.status.disabled'),
     }),
   },
@@ -274,7 +335,7 @@ const columns = computed<DataTableColumns<ManagedUser>>(() => [
     title: t('users.profiles'),
     key: 'profiles',
     minWidth: 200,
-    render: (row) => row.role === 'super_admin'
+    render: row => row.role === 'super_admin'
       ? h('span', { class: 'muted' }, t('users.allProfiles'))
       : h(NSpace, { size: 4 }, {
         default: () => row.profiles.length
@@ -282,12 +343,12 @@ const columns = computed<DataTableColumns<ManagedUser>>(() => [
           : h('span', { class: 'muted' }, t('users.noProfiles')),
       }),
   },
-  { title: t('users.lastLogin'), key: 'last_login_at', minWidth: 170, render: (row) => formatTime(row.last_login_at) },
+  { title: t('users.lastLogin'), key: 'last_login_at', minWidth: 170, render: row => formatTime(row.last_login_at) },
   {
     title: t('common.edit'),
     key: 'actions',
     width: 280,
-    render: (row) => h(NSpace, { size: 8 }, {
+    render: row => h(NSpace, { size: 8 }, {
       default: () => [
         h(NButton, { size: 'small', onClick: () => openEdit(row) }, { default: () => t('common.edit') }),
         h(NButton, {
@@ -389,6 +450,7 @@ onMounted(loadUsers)
         <NFormItem label="供应商">
           <NSelect
             v-model:value="modelForm.provider"
+            filterable
             :options="modelProviderOptions"
             :loading="modelLoading"
             @update:value="handleModelProviderUpdate"
@@ -400,9 +462,10 @@ onMounted(loadUsers)
             filterable
             :options="modelOptions"
             :loading="modelLoading"
+            placeholder="选择模型"
           />
         </NFormItem>
-        <NFormItem label="添加可用模型">
+        <NFormItem label="手动添加模型">
           <NInput
             v-model:value="modelForm.customModel"
             placeholder="输入模型 ID，保存后加入可选模型并设为默认"
