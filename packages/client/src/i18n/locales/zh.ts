@@ -221,7 +221,6 @@ export default {
     groupTools: '工具',
     groupToolsShort: "工具",
     codingAgents: "编程工具",
-    versionPreview: "版本预览",
     settings: '设置',
     connected: '已连接',
     disconnected: '未连接',

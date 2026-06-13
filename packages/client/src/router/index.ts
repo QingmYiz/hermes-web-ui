@@ -119,12 +119,6 @@ const router = createRouter({
       component: () => import('@/views/hermes/CodingAgentsView.vue'),
     },
     {
-      path: '/hermes/version-preview',
-      name: 'hermes.versionPreview',
-      component: () => import('@/views/hermes/VersionPreviewView.vue'),
-      meta: { requiresSuperAdmin: true },
-    },
-    {
       path: '/hermes/mcp',
       name: 'hermes.mcp',
       component: () => import('@/views/hermes/McpManagerView.vue'),

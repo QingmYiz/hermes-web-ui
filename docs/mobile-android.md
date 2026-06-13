@@ -24,9 +24,8 @@ packages/android/app/build/outputs/apk/debug/app-debug.apk
 - A draggable floating tool button with:
   - refresh page
   - request permissions
-  - download content
+  - download center with per-item delete and clear downloaded files
   - check APK update
-  - open current page in browser
   - return to the default Hermes URL
 - JavaScript bridge available as `window.HermesAndroid`:
   - `showTools()`

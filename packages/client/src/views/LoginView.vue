@@ -2,7 +2,7 @@
 import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { setApiKey } from "@/api/client";
+import { hasApiKey, setApiKey } from "@/api/client";
 import { fetchAuthStatus, loginWithPassword } from "@/api/auth";
 
 const { t } = useI18n();
@@ -15,6 +15,10 @@ const errorMsg = ref("");
 const showLockResetHint = ref(false);
 
 onMounted(async () => {
+  if (hasApiKey()) {
+    router.replace("/hermes/chat");
+    return;
+  }
   try {
     await fetchAuthStatus();
   } catch {

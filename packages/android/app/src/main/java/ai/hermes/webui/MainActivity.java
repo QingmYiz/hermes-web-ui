@@ -8,9 +8,13 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Insets;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -39,6 +43,7 @@ import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -62,14 +67,17 @@ public class MainActivity extends android.app.Activity implements TextToSpeech.O
     private static final int FILE_CHOOSER_REQUEST = 301;
     private static final int PERMISSION_REQUEST = 302;
     private static final String CHANNEL_ID = "hermes_mobile";
+    private static final String PREFS_NAME = "hermes_android";
+    private static final String PREF_LAST_URL = "last_url";
 
     private WebView webView;
     private ProgressBar progressBar;
     private FrameLayout root;
     private LinearLayout floatingPanel;
-    private Button floatingKnob;
+    private TextView floatingKnob;
     private ValueCallback<Uri[]> filePathCallback;
     private boolean menuOpen = false;
+    private boolean dragMoved = false;
     private TextToSpeech textToSpeech;
     private boolean textToSpeechReady = false;
     private String activeSpeechMessageId = "";
@@ -87,7 +95,7 @@ public class MainActivity extends android.app.Activity implements TextToSpeech.O
         configureWebView();
         configureTextToSpeech();
         requestCorePermissions();
-        webView.loadUrl(BuildConfig.DEFAULT_WEB_URL);
+        webView.loadUrl(getStartUrl());
         checkUpdate(false);
     }
 
@@ -156,6 +164,13 @@ public class MainActivity extends android.app.Activity implements TextToSpeech.O
                 if ("http".equals(scheme) || "https".equals(scheme)) return false;
                 openExternal(uri.toString());
                 return true;
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                if (url == null || url.trim().isEmpty()) return;
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putString(PREF_LAST_URL, url).apply();
             }
         });
         webView.setWebChromeClient(new WebChromeClient() {
@@ -269,50 +284,72 @@ public class MainActivity extends android.app.Activity implements TextToSpeech.O
         floatingPanel = new LinearLayout(this);
         floatingPanel.setOrientation(LinearLayout.VERTICAL);
         floatingPanel.setPadding(dp(8), dp(8), dp(8), dp(8));
-        floatingPanel.setBackgroundColor(Color.argb(235, 17, 24, 39));
+        floatingPanel.setBackground(roundedDrawable(Color.WHITE, 18));
+        floatingPanel.setElevation(dp(10));
         floatingPanel.setVisibility(View.GONE);
 
-        addToolButton("刷新页面", () -> webView.reload());
-        addToolButton("申请权限", this::requestCorePermissions);
-        addToolButton("下载内容", () -> fetchContentManifest(true));
-        addToolButton("检查更新", () -> checkUpdate(true));
-        addToolButton("浏览器打开", () -> openExternal(webView.getUrl()));
-        addToolButton("回到首页", () -> webView.loadUrl(BuildConfig.DEFAULT_WEB_URL));
+        addToolRow("↻", "刷新页面", () -> webView.reload());
+        addToolRow("✓", "申请权限", this::requestCorePermissions);
+        addToolRow("↓", "下载内容", () -> fetchContentManifest(true));
+        addToolRow("↑", "检查更新", () -> checkUpdate(true));
+        addToolRow("⌂", "回到首页", () -> webView.loadUrl(BuildConfig.DEFAULT_WEB_URL));
 
-        FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(dp(150), ViewGroup.LayoutParams.WRAP_CONTENT);
+        FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(dp(188), ViewGroup.LayoutParams.WRAP_CONTENT);
         panelParams.gravity = Gravity.BOTTOM | Gravity.END;
-        panelParams.setMargins(0, 0, dp(16), dp(86));
+        panelParams.setMargins(0, 0, dp(18), dp(84));
         root.addView(floatingPanel, panelParams);
 
-        floatingKnob = new Button(this);
-        floatingKnob.setText("⚙");
+        floatingKnob = new TextView(this);
+        floatingKnob.setText("☰");
+        floatingKnob.setGravity(Gravity.CENTER);
         floatingKnob.setTextSize(20);
+        floatingKnob.setTypeface(Typeface.DEFAULT_BOLD);
         floatingKnob.setTextColor(Color.WHITE);
-        floatingKnob.setBackgroundColor(Color.argb(235, 20, 184, 166));
-        FrameLayout.LayoutParams knobParams = new FrameLayout.LayoutParams(dp(54), dp(54));
+        floatingKnob.setBackground(roundedDrawable(Color.BLACK, 28));
+        floatingKnob.setElevation(dp(12));
+        FrameLayout.LayoutParams knobParams = new FrameLayout.LayoutParams(dp(56), dp(56));
         knobParams.gravity = Gravity.BOTTOM | Gravity.END;
-        knobParams.setMargins(0, 0, dp(16), dp(24));
+        knobParams.setMargins(0, 0, dp(18), dp(22));
         root.addView(floatingKnob, knobParams);
-        floatingKnob.setOnClickListener(v -> toggleMenu());
         floatingKnob.setOnTouchListener(this::dragKnob);
     }
 
-    private void addToolButton(String label, Runnable action) {
-        Button button = new Button(this);
-        button.setText(label);
-        button.setAllCaps(false);
-        button.setTextColor(Color.WHITE);
-        button.setBackgroundColor(Color.argb(255, 31, 41, 55));
-        button.setOnClickListener(v -> {
+    private void addToolRow(String icon, String label, Runnable action) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(8), 0, dp(8), 0);
+        row.setBackground(roundedDrawable(Color.TRANSPARENT, 14));
+        row.setOnClickListener(v -> {
             toggleMenu(false);
             action.run();
         });
+
+        TextView iconView = new TextView(this);
+        iconView.setText(icon);
+        iconView.setTextColor(Color.WHITE);
+        iconView.setTextSize(14);
+        iconView.setTypeface(Typeface.DEFAULT_BOLD);
+        iconView.setGravity(Gravity.CENTER);
+        iconView.setBackground(roundedDrawable(Color.BLACK, 15));
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(30), dp(30));
+        row.addView(iconView, iconParams);
+
+        TextView labelView = new TextView(this);
+        labelView.setText(label);
+        labelView.setTextColor(Color.rgb(17, 24, 39));
+        labelView.setTextSize(14);
+        labelView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+        labelParams.setMargins(dp(10), 0, 0, 0);
+        row.addView(labelView, labelParams);
+
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(40)
+            dp(44)
         );
-        params.setMargins(0, 0, 0, dp(6));
-        floatingPanel.addView(button, params);
+        params.setMargins(0, 0, 0, dp(4));
+        floatingPanel.addView(row, params);
     }
 
     private boolean dragKnob(View view, MotionEvent event) {
@@ -321,12 +358,16 @@ public class MainActivity extends android.app.Activity implements TextToSpeech.O
             case MotionEvent.ACTION_DOWN:
                 downRawX = event.getRawX();
                 downRawY = event.getRawY();
-                knobStartLeft = params.leftMargin;
-                knobStartTop = params.topMargin;
-                return false;
+                knobStartLeft = view.getLeft();
+                knobStartTop = view.getTop();
+                dragMoved = false;
+                return true;
             case MotionEvent.ACTION_MOVE:
                 float dx = event.getRawX() - downRawX;
                 float dy = event.getRawY() - downRawY;
+                if (!dragMoved && Math.hypot(dx, dy) < dp(8)) return true;
+                dragMoved = true;
+                toggleMenu(false);
                 params.gravity = Gravity.TOP | Gravity.START;
                 int left = Math.max(0, Math.min(root.getWidth() - view.getWidth(), knobStartLeft + Math.round(dx)));
                 int top = Math.max(0, Math.min(root.getHeight() - view.getHeight(), knobStartTop + Math.round(dy)));
@@ -337,16 +378,19 @@ public class MainActivity extends android.app.Activity implements TextToSpeech.O
                 view.setLayoutParams(params);
                 movePanelNearKnob(left, top);
                 return true;
+            case MotionEvent.ACTION_UP:
+                if (!dragMoved) toggleMenu();
+                return true;
             default:
-                return false;
+                return true;
         }
     }
 
     private void movePanelNearKnob(int left, int top) {
         FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) floatingPanel.getLayoutParams();
         params.gravity = Gravity.TOP | Gravity.START;
-        params.leftMargin = Math.max(0, Math.min(root.getWidth() - dp(150), left - dp(96)));
-        params.topMargin = Math.max(0, top - dp(260));
+        params.leftMargin = Math.max(dp(8), Math.min(root.getWidth() - dp(196), left - dp(132)));
+        params.topMargin = Math.max(dp(8), Math.min(root.getHeight() - dp(260), top - dp(230)));
         params.rightMargin = 0;
         params.bottomMargin = 0;
         floatingPanel.setLayoutParams(params);
@@ -403,12 +447,67 @@ public class MainActivity extends android.app.Activity implements TextToSpeech.O
     }
 
     private void showUpdateDialog(String versionName, String notes, String apkUrl) {
-        new AlertDialog.Builder(this)
-            .setTitle("发现新版本" + (versionName.isEmpty() ? "" : " " + versionName))
-            .setMessage(notes)
-            .setNegativeButton("取消", null)
-            .setPositiveButton("下载更新", (dialog, which) -> downloadApk(apkUrl))
-            .show();
+        AlertDialog dialog = new AlertDialog.Builder(this).create();
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(22), dp(20), dp(22), dp(18));
+        content.setBackground(roundedDrawable(Color.WHITE, 22));
+
+        TextView icon = new TextView(this);
+        icon.setText("↑");
+        icon.setGravity(Gravity.CENTER);
+        icon.setTextSize(20);
+        icon.setTypeface(Typeface.DEFAULT_BOLD);
+        icon.setTextColor(Color.WHITE);
+        icon.setBackground(roundedDrawable(Color.BLACK, 22));
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(44), dp(44));
+        iconParams.gravity = Gravity.CENTER_HORIZONTAL;
+        content.addView(icon, iconParams);
+
+        TextView title = new TextView(this);
+        title.setText("发现新版本" + (versionName.isEmpty() ? "" : " " + versionName));
+        title.setTextColor(Color.rgb(17, 24, 39));
+        title.setTextSize(19);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        titleParams.setMargins(0, dp(12), 0, dp(8));
+        content.addView(title, titleParams);
+
+        TextView message = new TextView(this);
+        message.setText(notes == null || notes.trim().isEmpty() ? "可下载新的安装包。" : notes);
+        message.setTextColor(Color.rgb(75, 85, 99));
+        message.setTextSize(14);
+        message.setLineSpacing(dp(2), 1.0f);
+        message.setGravity(Gravity.CENTER);
+        content.addView(message);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        actionsParams.setMargins(0, dp(18), 0, 0);
+        content.addView(actions, actionsParams);
+
+        TextView cancel = dialogButton("稍后", false);
+        TextView download = dialogButton("下载更新", true);
+        actions.addView(cancel, new LinearLayout.LayoutParams(0, dp(42), 1));
+        LinearLayout.LayoutParams downloadParams = new LinearLayout.LayoutParams(0, dp(42), 1);
+        downloadParams.setMargins(dp(10), 0, 0, 0);
+        actions.addView(download, downloadParams);
+
+        cancel.setOnClickListener(v -> dialog.dismiss());
+        download.setOnClickListener(v -> {
+            dialog.dismiss();
+            downloadApk(apkUrl);
+        });
+
+        dialog.setView(content);
+        dialog.setOnShowListener(d -> {
+            Window window = dialog.getWindow();
+            if (window != null) window.setBackgroundDrawableResource(android.R.color.transparent);
+        });
+        dialog.show();
     }
 
     private void downloadApk(String apkUrl) {
@@ -426,33 +525,186 @@ public class MainActivity extends android.app.Activity implements TextToSpeech.O
                     if (showEmpty) runOnUiThread(() -> Toast.makeText(this, "暂无可下载内容", Toast.LENGTH_SHORT).show());
                     return;
                 }
-                runOnUiThread(() -> showContentDialog(items));
+                runOnUiThread(() -> showDownloadCenter(items));
             } catch (Exception e) {
                 if (showEmpty) runOnUiThread(() -> Toast.makeText(this, "内容清单加载失败：" + e.getMessage(), Toast.LENGTH_LONG).show());
             }
         }).start();
     }
 
-    private void showContentDialog(JSONArray items) {
-        String[] labels = new String[items.length()];
+    private void showDownloadCenter(JSONArray items) {
+        AlertDialog dialog = new AlertDialog.Builder(this).create();
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(18), dp(18), dp(18), dp(14));
+        content.setBackground(roundedDrawable(Color.WHITE, 20));
+
+        TextView title = new TextView(this);
+        title.setText("下载内容");
+        title.setTextColor(Color.rgb(17, 24, 39));
+        title.setTextSize(20);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        content.addView(title);
+
+        TextView subtitle = new TextView(this);
+        subtitle.setText("管理服务器提供的内容包。");
+        subtitle.setTextColor(Color.rgb(107, 114, 128));
+        subtitle.setTextSize(13);
+        LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        subtitleParams.setMargins(0, dp(4), 0, dp(12));
+        content.addView(subtitle, subtitleParams);
+
+        ScrollView scrollView = new ScrollView(this);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        scrollView.addView(list);
+        LinearLayout.LayoutParams scrollParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(330));
+        content.addView(scrollView, scrollParams);
+
+        Runnable[] render = new Runnable[1];
+        render[0] = () -> {
+            list.removeAllViews();
+            for (int i = 0; i < items.length(); i++) {
+                JSONObject item = items.optJSONObject(i);
+                if (item == null) continue;
+                list.addView(downloadRow(item, render[0]));
+            }
+        };
+        render[0].run();
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        actionsParams.setMargins(0, dp(14), 0, 0);
+        content.addView(actions, actionsParams);
+
+        TextView clear = dialogButton("清空已下载", false);
+        TextView close = dialogButton("关闭", true);
+        actions.addView(clear, new LinearLayout.LayoutParams(0, dp(42), 1));
+        LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(0, dp(42), 1);
+        closeParams.setMargins(dp(10), 0, 0, 0);
+        actions.addView(close, closeParams);
+
+        clear.setOnClickListener(v -> {
+            int count = clearDownloadedItems(items);
+            Toast.makeText(this, count > 0 ? "已清空 " + count + " 个文件" : "没有可清空的文件", Toast.LENGTH_SHORT).show();
+            render[0].run();
+        });
+        close.setOnClickListener(v -> dialog.dismiss());
+
+        dialog.setView(content);
+        dialog.setOnShowListener(d -> {
+            Window window = dialog.getWindow();
+            if (window != null) window.setBackgroundDrawableResource(android.R.color.transparent);
+        });
+        dialog.show();
+    }
+
+    private View downloadRow(JSONObject item, Runnable refresh) {
+        String url = item.optString("url", "");
+        String title = item.optString("title", safeFileName(url));
+        File local = localDownloadFile(url);
+        boolean downloaded = local.exists() && local.length() > 0;
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setPadding(dp(12), dp(10), dp(12), dp(10));
+        row.setBackground(roundedDrawable(Color.rgb(249, 250, 251), 14, Color.rgb(229, 231, 235), 1));
+        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowParams.setMargins(0, 0, 0, dp(8));
+        row.setLayoutParams(rowParams);
+
+        LinearLayout top = new LinearLayout(this);
+        top.setOrientation(LinearLayout.HORIZONTAL);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        row.addView(top);
+
+        TextView icon = new TextView(this);
+        icon.setText(downloaded ? "✓" : "↓");
+        icon.setTextColor(Color.WHITE);
+        icon.setTextSize(13);
+        icon.setTypeface(Typeface.DEFAULT_BOLD);
+        icon.setGravity(Gravity.CENTER);
+        icon.setBackground(roundedDrawable(Color.BLACK, 14));
+        top.addView(icon, new LinearLayout.LayoutParams(dp(28), dp(28)));
+
+        TextView name = new TextView(this);
+        name.setText(title);
+        name.setTextColor(Color.rgb(17, 24, 39));
+        name.setTextSize(14);
+        name.setTypeface(Typeface.DEFAULT_BOLD);
+        name.setSingleLine(false);
+        LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+        nameParams.setMargins(dp(10), 0, 0, 0);
+        top.addView(name, nameParams);
+
+        TextView status = new TextView(this);
+        status.setText(downloaded ? "已下载 · " + readableBytes(local.length()) : "未下载");
+        status.setTextColor(Color.rgb(107, 114, 128));
+        status.setTextSize(12);
+        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        statusParams.setMargins(dp(38), dp(4), 0, dp(8));
+        row.addView(status, statusParams);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        row.addView(actions);
+
+        TextView download = smallButton(downloaded ? "重新下载" : "下载", true);
+        TextView delete = smallButton("删除", false);
+        actions.addView(download, new LinearLayout.LayoutParams(0, dp(34), 1));
+        LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(0, dp(34), 1);
+        deleteParams.setMargins(dp(8), 0, 0, 0);
+        actions.addView(delete, deleteParams);
+
+        download.setOnClickListener(v -> {
+            if (url.isEmpty()) {
+                Toast.makeText(this, "下载地址为空", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            enqueueDownload(url, safeFileName(url), title);
+            refresh.run();
+        });
+        delete.setEnabled(downloaded);
+        delete.setAlpha(downloaded ? 1f : 0.45f);
+        delete.setOnClickListener(v -> {
+            if (!downloaded) return;
+            boolean ok = local.delete();
+            Toast.makeText(this, ok ? "已删除" : "删除失败", Toast.LENGTH_SHORT).show();
+            refresh.run();
+        });
+
+        return row;
+    }
+
+    private int clearDownloadedItems(JSONArray items) {
+        int count = 0;
         for (int i = 0; i < items.length(); i++) {
             JSONObject item = items.optJSONObject(i);
-            labels[i] = item == null ? "内容 " + (i + 1) : item.optString("title", "内容 " + (i + 1));
+            if (item == null) continue;
+            File file = localDownloadFile(item.optString("url", ""));
+            if (file.exists() && file.delete()) count++;
         }
-        new AlertDialog.Builder(this)
-            .setTitle("下载内容")
-            .setItems(labels, (dialog, which) -> {
-                JSONObject item = items.optJSONObject(which);
-                if (item == null) return;
-                String url = item.optString("url", "");
-                String title = item.optString("title", URLUtil.guessFileName(url, null, null));
-                if (url.isEmpty()) {
-                    Toast.makeText(this, "下载地址为空", Toast.LENGTH_SHORT).show();
-                    return;
-                }
-                enqueueDownload(url, URLUtil.guessFileName(url, null, null), title);
-            })
-            .show();
+        return count;
+    }
+
+    private File localDownloadFile(String url) {
+        File dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+        if (dir == null) dir = getFilesDir();
+        return new File(dir, safeFileName(url));
+    }
+
+    private String safeFileName(String url) {
+        String guessed = URLUtil.guessFileName(url == null ? "" : url, null, null);
+        if (guessed == null || guessed.trim().isEmpty()) return "hermes-content-" + System.currentTimeMillis();
+        return guessed.replaceAll("[\\\\/:*?\"<>|]", "_");
+    }
+
+    private String readableBytes(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        double kb = bytes / 1024.0;
+        if (kb < 1024) return String.format(Locale.CHINA, "%.1f KB", kb);
+        return String.format(Locale.CHINA, "%.1f MB", kb / 1024.0);
     }
 
     private long enqueueDownload(String url, String filename, String title) {
@@ -465,6 +717,57 @@ public class MainActivity extends android.app.Activity implements TextToSpeech.O
         long id = manager.enqueue(request);
         Toast.makeText(this, "已开始下载：" + filename, Toast.LENGTH_SHORT).show();
         return id;
+    }
+
+    private TextView smallButton(String label, boolean primary) {
+        TextView button = new TextView(this);
+        button.setText(label);
+        button.setGravity(Gravity.CENTER);
+        button.setTextSize(13);
+        button.setTypeface(Typeface.DEFAULT_BOLD);
+        button.setTextColor(primary ? Color.WHITE : Color.rgb(17, 24, 39));
+        button.setBackground(roundedDrawable(
+            primary ? Color.BLACK : Color.rgb(243, 244, 246),
+            12,
+            primary ? Color.BLACK : Color.rgb(229, 231, 235),
+            1
+        ));
+        return button;
+    }
+
+    private TextView dialogButton(String label, boolean primary) {
+        TextView button = new TextView(this);
+        button.setText(label);
+        button.setGravity(Gravity.CENTER);
+        button.setTextSize(14);
+        button.setTypeface(Typeface.DEFAULT_BOLD);
+        button.setTextColor(primary ? Color.WHITE : Color.rgb(17, 24, 39));
+        button.setBackground(roundedDrawable(
+            primary ? Color.BLACK : Color.rgb(243, 244, 246),
+            14,
+            primary ? Color.BLACK : Color.rgb(229, 231, 235),
+            1
+        ));
+        return button;
+    }
+
+    private GradientDrawable roundedDrawable(int fillColor, int radiusDp) {
+        return roundedDrawable(fillColor, radiusDp, fillColor, 0);
+    }
+
+    private GradientDrawable roundedDrawable(int fillColor, int radiusDp, int strokeColor, int strokeWidthDp) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(fillColor);
+        drawable.setCornerRadius(dp(radiusDp));
+        if (strokeWidthDp > 0) drawable.setStroke(dp(strokeWidthDp), strokeColor);
+        return drawable;
+    }
+
+    private String getStartUrl() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String lastUrl = prefs.getString(PREF_LAST_URL, "");
+        if (lastUrl == null || lastUrl.trim().isEmpty()) return BuildConfig.DEFAULT_WEB_URL;
+        return lastUrl;
     }
 
     private JSONObject fetchJson(String urlText) throws Exception {

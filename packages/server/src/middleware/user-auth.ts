@@ -40,7 +40,7 @@ declare module 'koa' {
 }
 
 const JWT_AUDIENCE = 'hermes-web-ui'
-const DEFAULT_EXPIRES_SECONDS = 60 * 60 * 24 * 30
+const DEFAULT_EXPIRES_SECONDS = 60 * 60 * 24 * 180
 
 function base64UrlJson(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString('base64url')
