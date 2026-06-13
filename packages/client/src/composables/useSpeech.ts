@@ -685,9 +685,6 @@ export function useSpeech() {
 
   onUnmounted(() => {
     stop()
-    if (typeof window !== 'undefined') {
-      window.removeEventListener('hermes-android-tts', handleAndroidSpeechEvent)
-    }
     if (typeof synth?.removeEventListener === 'function') {
       synth.removeEventListener('voiceschanged', loadVoices)
     }
