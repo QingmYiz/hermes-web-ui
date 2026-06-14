@@ -139,7 +139,7 @@ export async function installCommunity(ctx: Context) {
     }
     const result = await installCommunityMcp(getProfile(ctx), id)
     if (!result.ok) {
-      ctx.status = 404
+      if (result.notFound) ctx.status = 404
       ctx.body = { error: result.error || 'Community MCP not found' }
       return
     }

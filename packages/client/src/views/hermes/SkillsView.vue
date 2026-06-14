@@ -100,6 +100,7 @@ async function loadCommunitySkills() {
     communityItems.value = await fetchCommunitySkills()
   } catch (err: any) {
     console.error('Failed to load skill community:', err)
+    message.error(err?.message || '社区资源加载失败')
   } finally {
     communityLoading.value = false
   }

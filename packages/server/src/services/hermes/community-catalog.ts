@@ -33,6 +33,13 @@ export interface CommunityMcpItem {
   installed?: boolean
 }
 
+export interface CommunityInstallResult<T> {
+  ok: boolean
+  item?: T
+  error?: string
+  notFound?: boolean
+}
+
 const COMMUNITY_SKILLS: Array<CommunitySkillItem & { content: string }> = [
   {
     id: 'meeting-summary-zh',
@@ -218,21 +225,18 @@ export async function listCommunitySkills(profile: string): Promise<CommunitySki
   }))
 }
 
-export async function installCommunitySkill(profile: string, id: string): Promise<{ ok: boolean; item?: CommunitySkillItem; error?: string }> {
+export async function installCommunitySkill(profile: string, id: string): Promise<CommunityInstallResult<CommunitySkillItem>> {
   const item = findSkill(id)
-  if (!item) return { ok: false, error: 'Community skill not found' }
+  if (!item) return { ok: false, error: '社区技能不存在', notFound: true }
 
   const targetDir = skillTargetDir(profile, item)
   const targetFile = join(targetDir, 'SKILL.md')
-  if (existsSync(targetFile)) {
-    const { content: _content, ...dto } = item
-    return { ok: true, item: { ...dto, installed: true } }
-  }
+  const { content: _content, ...dto } = item
+  if (existsSync(targetFile)) return { ok: true, item: { ...dto, installed: true } }
 
   await mkdir(targetDir, { recursive: true })
   await writeFile(targetFile, item.content, 'utf-8')
   await writeFile(join(profileSkillsDir(profile), item.category, 'DESCRIPTION.md'), '社区技能\n', 'utf-8')
-  const { content: _content, ...dto } = item
   return { ok: true, item: { ...dto, installed: true } }
 }
 
@@ -251,21 +255,26 @@ export async function listCommunityMcps(profile?: string): Promise<CommunityMcpI
   }))
 }
 
-export async function installCommunityMcp(profile: string | undefined, id: string): Promise<{ ok: boolean; item?: CommunityMcpItem; error?: string }> {
+export async function installCommunityMcp(profile: string | undefined, id: string): Promise<CommunityInstallResult<CommunityMcpItem>> {
   const item = findMcp(id)
-  if (!item) return { ok: false, error: 'Community MCP not found' }
+  if (!item) return { ok: false, error: '社区 MCP 不存在', notFound: true }
 
   const current = await listCommunityMcps(profile)
   const currentItem = current.find(entry => entry.id === id)
   if (currentItem?.installed) return { ok: true, item: currentItem }
 
-  const result = await bridgeMcpAction('mcp_server_add', {
-    name: item.name,
-    config: item.config,
-  }, profile)
-  if ((result as any)?.ok === false) {
-    return { ok: false, error: (result as any)?.error || 'Failed to install MCP server' }
+  try {
+    const result = await bridgeMcpAction('mcp_server_add', {
+      name: item.name,
+      config: item.config,
+    }, profile)
+    if ((result as any)?.ok === false) {
+      return { ok: false, error: (result as any)?.error || 'MCP bridge 拒绝安装该服务' }
+    }
+  } catch (err: any) {
+    return { ok: false, error: `MCP bridge 暂不可用：${err?.message || '无法连接'}` }
   }
+
   try {
     await bridgeMcpAction('mcp_reload', { server: item.name }, profile)
   } catch {

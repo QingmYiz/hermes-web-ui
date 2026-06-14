@@ -71,4 +71,29 @@ describe('community catalog', () => {
     }, 'user-a')
     expect(bridgeMcpActionMock).toHaveBeenCalledWith('mcp_reload', { server: 'community-memory' }, 'user-a')
   })
+
+  it('keeps MCP community list available when the bridge cannot list servers', async () => {
+    bridgeMcpActionMock.mockRejectedValueOnce(new Error('bridge offline'))
+    const { listCommunityMcps } = await import('../../packages/server/src/services/hermes/community-catalog')
+
+    const items = await listCommunityMcps('user-a')
+
+    expect(items.length).toBeGreaterThan(0)
+    expect(items.find(item => item.id === 'filesystem')).toMatchObject({
+      title: '文件系统',
+      installed: false,
+    })
+  })
+
+  it('returns an ok:false result instead of throwing when MCP install bridge is unavailable', async () => {
+    bridgeMcpActionMock
+      .mockResolvedValueOnce({ ok: true, servers: [] })
+      .mockRejectedValueOnce(new Error('bridge offline'))
+    const { installCommunityMcp } = await import('../../packages/server/src/services/hermes/community-catalog')
+
+    const result = await installCommunityMcp('user-a', 'fetch')
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('MCP bridge 暂不可用')
+  })
 })

@@ -507,7 +507,7 @@ export async function installCommunity(ctx: any) {
   try {
     const result = await installCommunitySkill(requestedProfile(ctx), id)
     if (!result.ok) {
-      ctx.status = 404
+      if (result.notFound) ctx.status = 404
       ctx.body = { error: result.error || 'Community skill not found' }
       return
     }
