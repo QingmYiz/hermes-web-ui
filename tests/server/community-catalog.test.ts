@@ -23,7 +23,11 @@ vi.mock('../../packages/server/src/services/hermes/mcp', () => ({
 describe('community catalog', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    bridgeMcpActionMock.mockResolvedValue({ ok: true, servers: [] })
+    bridgeMcpActionMock.mockImplementation(async (action: string) => {
+      if (action === 'mcp_list') return { ok: true, servers: [] }
+      if (action === 'mcp_server_test') return { ok: true, tools: ['mcp_test_tool'] }
+      return { ok: true }
+    })
   })
 
   it('returns Chinese-translated marketplace fields while preserving English source text', async () => {
@@ -40,6 +44,7 @@ describe('community catalog', () => {
     })
     expect(filesystem?.description).toContain('允许模型读取')
     expect(filesystem?.sourceDescription).toContain('Allow the model')
+    expect(items.length).toBeGreaterThan(10)
   })
 
   it('installs a community skill into the current profile skills directory', async () => {
@@ -70,6 +75,37 @@ describe('community catalog', () => {
       }),
     }, 'user-a')
     expect(bridgeMcpActionMock).toHaveBeenCalledWith('mcp_reload', { server: 'community-memory' }, 'user-a')
+    expect(bridgeMcpActionMock).toHaveBeenCalledWith('mcp_server_test', { name: 'community-memory' }, 'user-a')
+  })
+
+  it('repairs an already configured but unusable community MCP through update and readiness check', async () => {
+    bridgeMcpActionMock.mockImplementation(async (action: string) => {
+      if (action === 'mcp_list') {
+        return {
+          ok: true,
+          servers: [{
+            name: 'community-memory',
+            connected: false,
+            tools_registered: 0,
+            tools: 0,
+            error: 'server is not connected',
+          }],
+        }
+      }
+      if (action === 'mcp_server_test') return { ok: true, tools: ['mcp_memory_create'] }
+      return { ok: true }
+    })
+    const { installCommunityMcp } = await import('../../packages/server/src/services/hermes/community-catalog')
+
+    const result = await installCommunityMcp('user-a', 'memory')
+
+    expect(result.ok).toBe(true)
+    expect(bridgeMcpActionMock).toHaveBeenCalledWith('mcp_server_update', {
+      name: 'community-memory',
+      config: expect.objectContaining({
+        command: 'npx',
+      }),
+    }, 'user-a')
   })
 
   it('keeps MCP community list available when the bridge cannot list servers', async () => {
@@ -95,5 +131,15 @@ describe('community catalog', () => {
 
     expect(result.ok).toBe(false)
     expect(result.error).toContain('MCP bridge 暂不可用')
+  })
+
+  it('does not one-click install resources that require user configuration', async () => {
+    const { installCommunityMcp } = await import('../../packages/server/src/services/hermes/community-catalog')
+
+    const result = await installCommunityMcp('user-a', 'github')
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('需要先配置')
+    expect(bridgeMcpActionMock).not.toHaveBeenCalled()
   })
 })

@@ -59,7 +59,10 @@ export interface CommunityMcpItem {
   tags: string[]
   installable: boolean
   config: McpServerConfig
+  configured?: boolean
+  ready?: boolean
   installed?: boolean
+  error?: string
 }
 
 export async function fetchMcpServers(): Promise<McpServersResponse> {

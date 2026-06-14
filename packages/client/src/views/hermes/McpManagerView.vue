@@ -203,6 +203,13 @@ const filteredServers = computed(() => {
   )
 })
 
+function communityActionLabel(item: CommunityMcpItem): string {
+  if (item.installed) return '已安装'
+  if (!item.installable) return '需配置'
+  if (item.configured && !item.ready) return '修复'
+  return '安装'
+}
+
 async function loadServers() {
   loading.value = true
   error.value = ''
@@ -582,6 +589,9 @@ async function saveToolsVisibility() {
                 <div v-if="item.sourceLanguage === 'en'" class="source-text">
                   原文：{{ item.sourceTitle }} - {{ item.sourceDescription }}
                 </div>
+                <div v-if="item.configured && !item.ready && item.error" class="source-text">
+                  状态：{{ item.error }}
+                </div>
                 <div class="community-tags">
                   <span v-for="tag in item.tags" :key="tag">{{ tag }}</span>
                 </div>
@@ -593,7 +603,7 @@ async function saveToolsVisibility() {
                 :loading="installingCommunityId === item.id"
                 @click="handleInstallCommunityMcp(item)"
               >
-                {{ item.installed ? '已安装' : '安装' }}
+                {{ communityActionLabel(item) }}
               </NButton>
             </article>
           </div>
